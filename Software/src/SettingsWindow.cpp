@@ -2074,9 +2074,9 @@ void SettingsWindow::initLanguages()
 	// Shown in each language's own name; the item data is the (English) key stored in main.conf,
 	// so configs written by earlier versions keep working.
 	ui->comboBox_Language->addItem(QStringLiteral("English"), QStringLiteral("English"));
-	ui->comboBox_Language->addItem(QString(u"\u0420\u0443\u0441\u0441\u043A\u0438\u0439"), QStringLiteral("Russian"));
-	ui->comboBox_Language->addItem(QString(u"\u0423\u043A\u0440\u0430\u0457\u043D\u0441\u044C\u043A\u0430"), QStringLiteral("Ukrainian"));
-	ui->comboBox_Language->addItem(QString(u"Portugu\u00EAs (Brasil)"), QStringLiteral("Portuguese (Brazil)"));
+	ui->comboBox_Language->addItem(QStringLiteral(u"\u0420\u0443\u0441\u0441\u043A\u0438\u0439"), QStringLiteral("Russian"));
+	ui->comboBox_Language->addItem(QStringLiteral(u"\u0423\u043A\u0440\u0430\u0457\u043D\u0441\u044C\u043A\u0430"), QStringLiteral("Ukrainian"));
+	ui->comboBox_Language->addItem(QStringLiteral(u"Portugu\u00EAs (Brasil)"), QStringLiteral("Portuguese (Brazil)"));
 
 	int langIndex = 0; // "System default"
 	QString langSaved = Settings::getLanguage();
