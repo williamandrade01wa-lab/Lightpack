@@ -101,7 +101,9 @@ jobs:
     runs-on: windows-2022
     env:
       # UpdateElevate's project pins the VS2019 toolset (v142); the runner ships VS2022
-      UPDATEELEVATE_MSBUILD_ARGS: /p:PlatformToolset=v143
+      # '-p:' rather than '/p:': Git-for-Windows bash rewrites env values starting
+      # with '/' into paths, and MSBuild then sees a second project file (MSB1008)
+      UPDATEELEVATE_MSBUILD_ARGS: -p:PlatformToolset=v143
     steps:
       - uses: actions/checkout@v4
         with:
@@ -243,6 +245,11 @@ jobs:
             echo installing fresh version
             aqt install-qt mac desktop $QT_VERSION clang_64 --modules qtserialport --outputdir $QT_DEST
           fi
+          # Qt's qmake specs still link the AGL framework, which recent macOS SDKs
+          # no longer ship ("ld: framework 'AGL' not found"); drop it
+          for f in $(grep -rl -- '-framework AGL' "$QTDIR/mkspecs" "$QTDIR/lib" --include='*.conf' --include='*.prl' --include='*.pri' || true); do
+            sed -i '' 's/-framework AGL//g' "$f"
+          done
       - name: Build
         run: |
           export PATH=$QTDIR/bin:$PATH
