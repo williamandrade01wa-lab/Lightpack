@@ -10,7 +10,7 @@ defaults:
     working-directory: ./Software
 jobs:
   build-pacman:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     name: pacman Build (Arch Linux)
     steps:
       - name: Checkout Source
@@ -31,7 +31,7 @@ jobs:
           path: ${{ env.PKG_PATH }}
 
   build-flatpack:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     name: Flatpack Build
     steps:
       - name: Checkout Source
@@ -58,10 +58,10 @@ jobs:
           path: ${{ env.PKG_PATH }}
 
   build-dpkg:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        os: [ 'ubuntu 22.04', 'ubuntu 20.04', 'debian 12.4' ]
+        os: [ 'ubuntu 24.04', 'ubuntu 22.04', 'debian 12' ]
     name: dpkg Build (${{ matrix.os }})
     steps:
       - name: Checkout Source
@@ -98,15 +98,24 @@ jobs:
 
   build-win:
     name: Windows Build
-    runs-on: windows-2019
+    runs-on: windows-2022
+    env:
+      # UpdateElevate's project pins the VS2019 toolset (v142); the runner ships VS2022
+      UPDATEELEVATE_MSBUILD_ARGS: /p:PlatformToolset=v143
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - run: choco install --no-progress openssl
+      - name: Ensure Inno Setup
+        shell: powershell
+        run: |
+          If (!(Test-Path -Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install --no-progress innosetup
+          }
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Install Qt
-        uses: jurplel/install-qt-action@v3
+        uses: jurplel/install-qt-action@v4
         with:
           cache: true
           cache-key-prefix: install-qt-action-default
@@ -183,7 +192,7 @@ jobs:
 
   build-macos:
     name: macOS Build
-    runs-on: macOS-11
+    runs-on: macos-14
     env:
       QT_DEST: Qt
     steps:
@@ -198,6 +207,9 @@ jobs:
           xcode-select -p
           xcodebuild -version
           xcodebuild -showsdks
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: install Qt installer
         run: |
           set -xe
