@@ -278,6 +278,7 @@ private:
 	void setupPerformanceControls();
 	void refreshPerformanceControls();
 	void updateDownscaleLabel(int level);
+	void retranslatePerformanceControls();
 
 	void adjustSizeAndMoveCenter();
 
@@ -332,6 +333,7 @@ private:
 	QGroupBox *m_groupPerformance{ nullptr };
 	QSlider *m_sliderDownscale{ nullptr };
 	QLabel *m_labelDownscaleValue{ nullptr };
+	QLabel *m_labelDownscale{ nullptr };
 	QCheckBox *m_checkWatchdog{ nullptr };
 	QSpinBox *m_spinWatchdogStall{ nullptr };
 

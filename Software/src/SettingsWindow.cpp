@@ -274,7 +274,9 @@ void SettingsWindow::connectSignalsSlots()
 
 	// Main options
 	connect(ui->comboBox_LightpackModes, qOverload<int>(&QComboBox::currentIndexChanged), this, &SettingsWindow::onLightpackModes_currentIndexChanged);
-	connect(ui->comboBox_Language, &QComboBox::currentTextChanged, this, &SettingsWindow::loadTranslation);
+	connect(ui->comboBox_Language, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+		loadTranslation(ui->comboBox_Language->itemData(index).toString());
+	});
 	connect(ui->pushButton_EnableDisableDevice, &QPushButton::clicked, this, &SettingsWindow::toggleBacklight);
 
 	// Device options
@@ -405,6 +407,7 @@ void SettingsWindow::changeEvent(QEvent *e)
 
 		ui->comboBox_Language->setItemText(0, tr("System default"));
 		retranslateModeSwitch();
+		retranslatePerformanceControls();
 		Explanations::apply(this); // retranslateUi() reset the designer tooltips
 
 		updateStatusBar();
@@ -1449,32 +1452,24 @@ void SettingsWindow::setupPerformanceControls()
 	m_checkWatchdog = nullptr;
 	m_spinWatchdogStall = nullptr;
 #ifdef DDUPL_GRAB_SUPPORT
-	m_groupPerformance = new QGroupBox(tr("Performance"), ui->page);
+	m_groupPerformance = new QGroupBox(ui->page);
 	QGridLayout *layout = new QGridLayout(m_groupPerformance);
 
-	QLabel *labelDownscale = new QLabel(tr("Capture resolution:"), m_groupPerformance);
+	m_labelDownscale = new QLabel(m_groupPerformance);
 	m_sliderDownscale = new QSlider(Qt::Horizontal, m_groupPerformance);
 	m_sliderDownscale->setRange(SettingsScope::Profile::Grab::DownscaleLevelMin, SettingsScope::Profile::Grab::DownscaleLevelMax);
 	m_sliderDownscale->setPageStep(1);
 	m_sliderDownscale->setTickPosition(QSlider::TicksBelow);
 	m_sliderDownscale->setInvertedAppearance(true); // left = lighter load, right = more detail
-	m_sliderDownscale->setToolTip(tr("How much the screen is scaled down on the GPU before colors are computed.\n"
-		"Lower resolution = less GPU/CPU load. Zone colors barely change; "
-		"only very small zones benefit from more detail. Default: 1/8 (DXGI grabber)."));
 	m_labelDownscaleValue = new QLabel(m_groupPerformance);
 	m_labelDownscaleValue->setMinimumWidth(110);
 
-	m_checkWatchdog = new QCheckBox(tr("Recover capture in fullscreen apps after"), m_groupPerformance);
-	m_checkWatchdog->setToolTip(tr("Some games and video players stop the desktop capture when they go fullscreen, "
-		"freezing the LEDs.\nWhile a fullscreen window is focused on a captured screen and no new image arrives "
-		"for this long, the capture is recreated (retrying less often while the image stays static)."));
+	m_checkWatchdog = new QCheckBox(m_groupPerformance);
 	m_spinWatchdogStall = new QSpinBox(m_groupPerformance);
 	m_spinWatchdogStall->setRange(SettingsScope::Profile::Grab::WatchdogStallMsMin, SettingsScope::Profile::Grab::WatchdogStallMsMax);
 	m_spinWatchdogStall->setSingleStep(250);
-	m_spinWatchdogStall->setSuffix(tr(" ms"));
-	m_spinWatchdogStall->setToolTip(tr("Lower = recovers faster, but may also recreate the capture during short static scenes."));
 
-	layout->addWidget(labelDownscale, 0, 0);
+	layout->addWidget(m_labelDownscale, 0, 0);
 	layout->addWidget(m_sliderDownscale, 0, 1);
 	layout->addWidget(m_labelDownscaleValue, 0, 2);
 	layout->addWidget(m_checkWatchdog, 1, 0, 1, 2);
@@ -1495,8 +1490,33 @@ void SettingsWindow::setupPerformanceControls()
 		Settings::setWatchdogStallMs(ms);
 	});
 
+	retranslatePerformanceControls();
 	refreshPerformanceControls();
 #endif
+}
+
+// These widgets are built in code, so ui->retranslateUi() does not reach them:
+// (re)apply their texts at creation and on every language change.
+void SettingsWindow::retranslatePerformanceControls()
+{
+	if (!m_groupPerformance)
+		return;
+	// wrapping in <p> makes Qt treat the tooltip as rich text, so it word-wraps
+	const auto wrapped = [](const QString &text) {
+		return QStringLiteral("<p>%1</p>").arg(text.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br/>")));
+	};
+	m_groupPerformance->setTitle(tr("Performance"));
+	m_labelDownscale->setText(tr("Capture resolution:"));
+	m_sliderDownscale->setToolTip(wrapped(tr("How much the screen is scaled down on the GPU before colors are computed.\n"
+		"Lower resolution = less GPU/CPU load. Zone colors barely change; "
+		"only very small zones benefit from more detail. Default: 1/8 (DXGI grabber).")));
+	m_checkWatchdog->setText(tr("Recover capture in fullscreen apps after"));
+	m_checkWatchdog->setToolTip(wrapped(tr("Some games and video players stop the desktop capture when they go fullscreen, "
+		"freezing the LEDs.\nWhile a fullscreen window is focused on a captured screen and no new image arrives "
+		"for this long, the capture is recreated (retrying less often while the image stays static).")));
+	m_spinWatchdogStall->setSuffix(tr(" ms"));
+	m_spinWatchdogStall->setToolTip(wrapped(tr("Lower = recovers faster, but may also recreate the capture during short static scenes.")));
+	updateDownscaleLabel(m_sliderDownscale->value());
 }
 
 void SettingsWindow::updateDownscaleLabel(int level)
@@ -2051,15 +2071,17 @@ void SettingsWindow::initLanguages()
 
 	ui->comboBox_Language->clear();
 	ui->comboBox_Language->addItem(tr("System default"));
-	ui->comboBox_Language->addItem(QStringLiteral("English"));
-	ui->comboBox_Language->addItem(QStringLiteral("Russian"));
-	ui->comboBox_Language->addItem(QStringLiteral("Ukrainian"));
-	ui->comboBox_Language->addItem(QStringLiteral("Portuguese (Brazil)"));
+	// Shown in each language's own name; the item data is the (English) key stored in main.conf,
+	// so configs written by earlier versions keep working.
+	ui->comboBox_Language->addItem(QStringLiteral("English"), QStringLiteral("English"));
+	ui->comboBox_Language->addItem(QString(u"\u0420\u0443\u0441\u0441\u043A\u0438\u0439"), QStringLiteral("Russian"));
+	ui->comboBox_Language->addItem(QString(u"\u0423\u043A\u0440\u0430\u0457\u043D\u0441\u044C\u043A\u0430"), QStringLiteral("Ukrainian"));
+	ui->comboBox_Language->addItem(QString(u"Portugu\u00EAs (Brasil)"), QStringLiteral("Portuguese (Brazil)"));
 
 	int langIndex = 0; // "System default"
 	QString langSaved = Settings::getLanguage();
 	if(langSaved != QStringLiteral("<System>")){
-		langIndex = ui->comboBox_Language->findText(langSaved);
+		langIndex = qMax(0, ui->comboBox_Language->findData(langSaved));
 	}
 	ui->comboBox_Language->setCurrentIndex(langIndex);
 

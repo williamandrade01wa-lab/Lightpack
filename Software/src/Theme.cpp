@@ -143,13 +143,13 @@ void applySidebar(QListWidget *sidebar)
 
 	// Uniform item cells instead of free-flowing icons with 20px spacing
 	sidebar->setSpacing(0);
-	sidebar->setGridSize(QSize(sidebar->minimumWidth() > 0 ? sidebar->minimumWidth() - 12 : 100, 68));
+	sidebar->setGridSize(QSize(sidebar->minimumWidth() > 0 ? sidebar->minimumWidth() - 4 : 100, 68));
 	sidebar->setUniformItemSizes(true);
 	sidebar->setFocusPolicy(Qt::NoFocus); // no dotted focus rectangle around the current page
 
 	sidebar->setStyleSheet(QStringLiteral(
 		"QListWidget#%1 { background: %2; border: none; border-radius: 10px; padding: 6px 0px; outline: 0; }"
-		"QListWidget#%1::item { color: %3; border-radius: 8px; margin: 2px 6px; padding-top: 8px; }"
+		"QListWidget#%1::item { color: %3; border-radius: 8px; margin: 2px 1px; padding-top: 8px; }"
 		"QListWidget#%1::item:hover:!selected { background: %4; }"
 		"QListWidget#%1::item:selected { background: %5; color: %3; border-left: 3px solid %6; }")
 		.arg(sidebar->objectName(),
