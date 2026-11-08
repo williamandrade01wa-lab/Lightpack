@@ -108,10 +108,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      # Pin OpenSSL 3 (3.5 LTS): the installer ships libcrypto-3/libssl-3 and Qt 6.8's TLS
-      # backend loads OpenSSL 3. An unpinned install now pulls OpenSSL 4, and UpdateElevate.exe
-      # then links libcrypto-4-x64.dll, which isn't shipped ("libcrypto-4-x64.dll not found").
-      - run: choco install --no-progress openssl --version=3.5.0
+      # Install OpenSSL 3.5 LTS: the installer ships libcrypto-3/libssl-3 and Qt 6.8's TLS
+      # backend loads OpenSSL 3. An unpinned 'choco install openssl' now pulls OpenSSL 4, and
+      # UpdateElevate.exe then links libcrypto-4-x64.dll, which isn't shipped.
+      # Pinning a choco version doesn't work either: slproweb (where the package downloads from)
+      # only keeps the newest patch of each series, so pinned versions start returning 404.
+      # So take the newest 3.5.x straight from slproweb and verify its published SHA-256.
+      - name: Install OpenSSL 3.5 LTS
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hashes = Invoke-RestMethod 'https://raw.githubusercontent.com/slproweb/opensslhashes/master/win32_openssl_hashes.json'
+          $entry = $hashes.files.PSObject.Properties |
+            Where-Object { $_.Name -match '^Win64OpenSSL-3_5_\d+\.exe$' } |
+            Sort-Object { [version]$_.Value.basever } | Select-Object -Last 1
+          if (-not $entry) { throw 'No OpenSSL 3.5.x installer listed by slproweb' }
+          Write-Host "Using $($entry.Name) ($($entry.Value.basever))"
+          $exe = Join-Path $env:RUNNER_TEMP $entry.Name
+          Invoke-WebRequest $entry.Value.url -OutFile $exe -UseBasicParsing
+          $actual = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $entry.Value.sha256) { throw "SHA-256 mismatch for $($entry.Name): $actual" }
+          $p = Start-Process $exe -ArgumentList '/VERYSILENT','/SP-','/SUPPRESSMSGBOXES','/NORESTART','/DIR="C:\Program Files\OpenSSL"' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "OpenSSL installer exited with $($p.ExitCode)" }
+          Get-ChildItem 'C:\Program Files\OpenSSL\bin' -Filter 'lib*-3-x64.dll' | ForEach-Object Name
       - name: Ensure Inno Setup
         shell: powershell
         run: |
