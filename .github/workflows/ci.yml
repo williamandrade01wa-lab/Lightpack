@@ -166,7 +166,8 @@ jobs:
       - name: Build
         shell: cmd
         run: |
-          set QTDIR=%Qt6_Dir%
+          rem install-qt-action v4 exports QT_ROOT_DIR (v3 exported Qt6_Dir)
+          set QTDIR=%QT_ROOT_DIR%
           call scripts\win32\generate_sln.bat
           MSBuild.exe Lightpack.sln /p:Configuration=Release
       - name: Prepare Installer
