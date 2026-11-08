@@ -119,7 +119,9 @@ jobs:
         with:
           cache: true
           cache-key-prefix: install-qt-action-default
-          version: 6.*
+          # pin an LTS line; '6.*' drifts to releases aqt mirrors may not have yet
+          version: '6.8.*'
+          arch: win64_msvc2022_64
           modules: qtserialport
       - name: Cached Bass
         id: cache-bass
@@ -192,7 +194,7 @@ jobs:
 
   build-macos:
     name: macOS Build
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       QT_DEST: Qt
     steps:
@@ -217,7 +219,7 @@ jobs:
           pip3 install aqtinstall
           pip3 show aqtinstall
           aqt list-qt mac desktop
-          QT_VERSION=$(aqt list-qt mac desktop --spec 6.2 --latest-version)
+          QT_VERSION=$(aqt list-qt mac desktop --spec 6.8 --latest-version)
           echo "QT_VERSION=$QT_VERSION" >> $GITHUB_ENV
       - name: Cached Qt
         id: cache-qt
