@@ -50,7 +50,8 @@ TRANSLATIONS += ../res/translations/en.ts \
        ../res/translations/ru_RU.ts \
        ../res/translations/uk_UA.ts \
        ../res/translations/pl_PL.ts \
-       ../res/translations/zh_CN.ts
+       ../res/translations/zh_CN.ts \
+       ../res/translations/pt_BR.ts
 RESOURCES    = ../res/LightpackResources.qrc
 RC_FILE      = ../res/Lightpack.rc
 
@@ -304,6 +305,7 @@ SOURCES += \
     ColorButton.cpp \
     Theme.cpp \
     BasicPanel.cpp \
+    Explanations.cpp \
     ApiServer.cpp \
     ApiServerSetColorTask.cpp \
     MoodLampManager.cpp \
@@ -359,6 +361,7 @@ HEADERS += \
     ColorButton.hpp \
     Theme.hpp \
     BasicPanel.hpp \
+    Explanations.hpp \
     ../common/defs.h \
     enums.hpp         ApiServer.hpp     ApiServerSetColorTask.hpp \
     hidapi/hidapi.h \
