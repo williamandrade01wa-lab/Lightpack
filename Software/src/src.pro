@@ -302,6 +302,7 @@ SOURCES += \
     LedDeviceDnrgb.cpp \
     LedDeviceWarls.cpp \
     ColorButton.cpp \
+    Theme.cpp \
     ApiServer.cpp \
     ApiServerSetColorTask.cpp \
     MoodLampManager.cpp \
@@ -355,6 +356,7 @@ HEADERS += \
     LedDeviceWarls.hpp \
     LedDeviceVirtual.hpp \
     ColorButton.hpp \
+    Theme.hpp \
     ../common/defs.h \
     enums.hpp         ApiServer.hpp     ApiServerSetColorTask.hpp \
     hidapi/hidapi.h \

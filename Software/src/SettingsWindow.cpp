@@ -50,6 +50,7 @@
 #include <QCheckBox>
 #include <QSpinBox>
 #include "PrismatikMath.hpp"
+#include "Theme.hpp"
 
 using namespace SettingsScope;
 
@@ -118,6 +119,7 @@ SettingsWindow::SettingsWindow(QWidget *parent) :
 	initPixmapCache();
 
 	setupPerformanceControls();
+	applyTheme();
 
 
 	m_labelStatusIcon = new QLabel(statusBar());
@@ -397,6 +399,11 @@ void SettingsWindow::changeEvent(QEvent *e)
 
 		updateStatusBar();
 
+		break;
+	case QEvent::PaletteChange:
+		// Windows switched light/dark mode (or accent color): re-tint icons and colors
+		if (!m_applyingTheme)
+			applyTheme();
 		break;
 	default:
 		break;
@@ -1263,6 +1270,15 @@ void SettingsWindow::onDx9CaptureEnabledChanged(bool isEnabled) {
 		Settings::setDx9GrabbingEnabled(isEnabled);
 #endif
 	}
+}
+
+void SettingsWindow::applyTheme()
+{
+	m_applyingTheme = true;
+	Theme::applySidebar(ui->listWidget);
+	Theme::applyWindow(this, ui->pushButton_EnableDisableDevice);
+	Theme::applyHelpButtons(this);
+	m_applyingTheme = false;
 }
 
 // Performance group on the screen grabbing page. Built in code (not in the .ui)

@@ -265,6 +265,7 @@ private:
 	void initGrabbersRadioButtonsVisibility();
 	void initVirtualLeds(int ledsCount);
 
+	void applyTheme();
 	void setupPerformanceControls();
 	void refreshPerformanceControls();
 	void updateDownscaleLabel(int level);
@@ -309,6 +310,8 @@ private:
 	QLabel *labelFPS;
 	double m_maxFPS{ 0 };
 	QTimer m_baudrateWarningClearTimer;
+
+	bool m_applyingTheme{ false };
 
 	// performance group (screen grabbing page), only created where the DXGI grabber exists
 	QGroupBox *m_groupPerformance{ nullptr };
