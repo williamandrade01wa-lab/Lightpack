@@ -13,6 +13,19 @@ _/_/_/_/  _/    _/_/_/  _/    _/      _/_/  _/_/_/      _/_/_/    _/_/_/  _/    
 #    Software changelog
 ===================================================================================
 
+Version 5.11.3.0
+---------------
+(unreleased, fork williamandrade01wa-lab/Lightpack)
+
+* Windows (DXGI): recover capture that stops in fullscreen games/videos
+  (resolution changes, device resets, silent duplication stalls)
+* Windows (DXGI): reuse GPU textures between frames instead of recreating
+  them every frame; release the frame earlier
+* Windows (DXGI): fix out-of-bounds read of the black frame used while a
+  3D application blocks desktop duplication
+* New "Performance" options: capture resolution, fullscreen recovery and delay
+* Build: Qt 6.8 LTS, current GitHub runners for all platforms
+
 Version 5.11.2.31
 ---------------
 January 8, 2022
