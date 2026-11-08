@@ -93,7 +93,9 @@ protected:
 	// (or keep failing) after fullscreen/exclusive-mode transitions.
 	// These detect that state so the duplication can be recreated.
 	bool isWatchdogTriggered() const;
-	static bool isForegroundWindowFullscreen();
+	// monitor covered by the focused window if it is fullscreen, NULL otherwise
+	static HMONITOR foregroundFullscreenMonitor();
+	bool isForegroundFullscreenOnGrabbedScreen() const;
 	void requestRecovery(const char *reason);
 
 private:

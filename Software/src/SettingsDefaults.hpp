@@ -190,6 +190,14 @@ static const int ColorTemperatureMax = 10000;
 static const double GammaMin = 0.05;
 static const double GammaDefault = 1.2;
 static const double GammaMax = 10.0;
+// Performance (DXGI grabber): capture downscale as a power of two, 0 = full resolution
+static const int DownscaleLevelMin = 0;
+static const int DownscaleLevelDefault = 3;
+static const int DownscaleLevelMax = 4;
+static const bool IsFullscreenWatchdogEnabledDefault = true;
+static const int WatchdogStallMsMin = 500;
+static const int WatchdogStallMsDefault = 2500;
+static const int WatchdogStallMsMax = 10000;
 }
 // [MoodLamp]
 namespace MoodLamp

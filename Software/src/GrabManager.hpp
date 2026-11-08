@@ -62,6 +62,7 @@ public:
 public slots:
 	void onGrabberTypeChanged(const Grab::GrabberType grabberType);
 	void onGrabSlowdownChanged(int ms);
+	void onGrabPerformanceChanged();
 	void onGrabAvgColorsEnabledChanged(bool state);
 	void onGrabOverBrightenChanged(int value);
 	void onGrabApplyBlueLightReductionChanged(bool state);

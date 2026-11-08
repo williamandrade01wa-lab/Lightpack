@@ -24,6 +24,7 @@
 */
 
 #include "DDuplGrabber.hpp"
+#include "GrabberContext.hpp"
 #include "SystemSession.hpp"
 #include "debug.h"
 
@@ -62,18 +63,25 @@ typedef HRESULT(WINAPI *D3D11CreateDeviceFunc)(
 #define THREAD_DESTRUCTION_WAIT_TIMEOUT 3000
 // Watchdog: if a fullscreen app is in the foreground and no new frame arrived
 // for this long, assume the duplication went stale and recreate it.
+// Default only; the effective value is the user setting GrabberContext::watchdogStallMs.
 // (On a static desktop no frames arriving is normal, so the watchdog only
 // arms while a fullscreen window is focused.)
 #define WATCHDOG_STALL_INTERVAL 2500
 #define WATCHDOG_FOREGROUND_PROBE_INTERVAL 500
 
 namespace {
+	// Downscale level (user setting, GrabberContext::downscaleLevel):
 	// 0 = /1 (no scaling)
 	// 1 = /2
 	// 2 = /4
-	// 3 = /8 (best value for now)
-	// 4+ seems to be counter-productive
-	static const uint8_t DownscaleMipLevel = 3;
+	// 3 = /8 (default, best value for now)
+	// 4 = /16 (lowest load; still fine for large zones)
+	// 5+ seems to be counter-productive
+	static const int DownscaleMipLevelMax = 4;
+
+	inline int clampDownscaleLevel(int level) {
+		return level < 0 ? 0 : (level > DownscaleMipLevelMax ? DownscaleMipLevelMax : level);
+	}
 }
 
 struct DDuplScreenData
@@ -87,8 +95,25 @@ struct DDuplScreenData
 	ID3D11DevicePtr device{nullptr};
 	ID3D11DeviceContextPtr context{nullptr};
 
-	ID3D11Texture2DPtr textureCopy{nullptr};
+	// GPU resources reused across frames. They used to be created (2 textures +
+	// 1 shader resource view) and destroyed on every single frame; now they are
+	// only recreated when the frame size, format or downscale level changes.
+	ID3D11Texture2DPtr textureCopy{nullptr};        // CPU-readable staging texture
+	ID3D11Texture2DPtr scaledTexture{nullptr};      // full size + mip chain for GPU downscaling
+	ID3D11ShaderResourceViewPtr scaledTextureView{nullptr};
+	IDXGISurface1Ptr mappedSurface{nullptr};        // non-null while textureCopy is mapped (imgData points into it)
+	UINT cachedWidth = 0;
+	UINT cachedHeight = 0;
+	DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
+	int cachedLevel = -1;
 	DXGI_MAPPED_RECT surfaceMap;
+
+	void unmap() {
+		if (mappedSurface) {
+			mappedSurface->Unmap();
+			mappedSurface = nullptr;
+		}
+	}
 };
 
 DWORD WINAPI DDuplGrabberThreadProc(LPVOID arg) {
@@ -132,45 +157,66 @@ DDuplGrabber::DDuplGrabber(QObject * parent, GrabberContext *context)
 {
 }
 
-bool DDuplGrabber::isForegroundWindowFullscreen()
+HMONITOR DDuplGrabber::foregroundFullscreenMonitor()
 {
 	HWND fg = GetForegroundWindow();
 	if (fg == NULL || fg == GetDesktopWindow() || fg == GetShellWindow())
-		return false;
+		return NULL;
 
 	// The desktop itself (Progman/WorkerW) covers the monitor but is not "fullscreen content"
 	wchar_t className[64] = { 0 };
 	if (GetClassNameW(fg, className, ARRAYSIZE(className)) > 0
 		&& (wcscmp(className, L"Progman") == 0 || wcscmp(className, L"WorkerW") == 0))
-		return false;
+		return NULL;
 
 	RECT windowRect;
 	if (!GetWindowRect(fg, &windowRect))
-		return false;
+		return NULL;
 
+	const HMONITOR monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
 	MONITORINFO monitorInfo;
 	monitorInfo.cbSize = sizeof(monitorInfo);
-	if (!GetMonitorInfo(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &monitorInfo))
-		return false;
+	if (!GetMonitorInfo(monitor, &monitorInfo))
+		return NULL;
 
 	// borderless and exclusive fullscreen windows both cover (at least) the whole monitor
-	return windowRect.left <= monitorInfo.rcMonitor.left
+	const bool coversMonitor = windowRect.left <= monitorInfo.rcMonitor.left
 		&& windowRect.top <= monitorInfo.rcMonitor.top
 		&& windowRect.right >= monitorInfo.rcMonitor.right
 		&& windowRect.bottom >= monitorInfo.rcMonitor.bottom;
+	return coversMonitor ? monitor : NULL;
+}
+
+bool DDuplGrabber::isForegroundFullscreenOnGrabbedScreen() const
+{
+	const HMONITOR monitor = foregroundFullscreenMonitor();
+	if (monitor == NULL)
+		return false;
+	// only screens we actually capture matter: a fullscreen game on another
+	// monitor must not make the watchdog recreate a perfectly fine capture
+	for (const GrabbedScreen& screen : _screensWithWidgets)
+		if (screen.screenInfo.handle == monitor)
+			return true;
+	return false;
 }
 
 bool DDuplGrabber::isWatchdogTriggered() const
 {
+	if (!_context->fullscreenWatchdogEnabled.load())
+		return false;
+
 	const DWORD now = GetTickCount();
-	// 2.5s, 5s, 10s, then every 20s while the image stays static
-	const DWORD stallInterval = WATCHDOG_STALL_INTERVAL << qMin<quint32>(m_watchdogBackoff, 3);
+	int baseInterval = _context->watchdogStallMs.load();
+	if (baseInterval <= 0)
+		baseInterval = WATCHDOG_STALL_INTERVAL;
+	// e.g. 2.5s, 5s, 10s, then every 20s while the image stays static
+	const DWORD stallInterval = (DWORD)baseInterval << qMin<quint32>(m_watchdogBackoff, 3);
 	if (now - m_lastNewFrameTick < stallInterval)
 		return false;
 
 	if (now - m_foregroundProbeTick >= WATCHDOG_FOREGROUND_PROBE_INTERVAL)
 	{
-		m_cachedForegroundFullscreen = isForegroundWindowFullscreen();
+		m_cachedForegroundFullscreen = isForegroundFullscreenOnGrabbedScreen();
 		m_foregroundProbeTick = now;
 	}
 	return m_cachedForegroundFullscreen;
@@ -392,8 +438,11 @@ void DDuplGrabber::freeScreens()
 	{
 		if (screen.imgData != NULL)
 		{
-			if (((DDuplScreenData*)screen.associatedData)->textureCopy == nullptr)
-				free((void*)screen.imgData);// if we don't have a texture we have a manually allocated black frame
+			DDuplScreenData* screenData = (DDuplScreenData*)screen.associatedData;
+			if (screenData == NULL || screenData->mappedSurface == nullptr)
+				free((void*)screen.imgData);// if it doesn't point into a mapped texture it's a manually allocated black frame
+			else
+				screenData->unmap();
 			screen.imgData = NULL;
 			screen.imgDataSize = 0;
 		}
@@ -594,16 +643,18 @@ GrabResult DDuplGrabber::returnBlackBuffer()
 	for (GrabbedScreen& screen : _screensWithWidgets)
 	{
 		DDuplScreenData* screenData = (DDuplScreenData*)screen.associatedData;
-		if (screenData->textureCopy) {
-			// if we have a texture, imgData points to surfaceMap.pBits
-			// so here we only need to free the texture and null everything
-			screenData->textureCopy = nullptr;
+		if (screenData->mappedSurface) {
+			// imgData points into the mapped texture; unmap (the texture is kept for reuse)
+			screenData->unmap();
 			screen.imgData = NULL;
 			screen.imgDataSize = 0;
 		}
-		screen.scale = 1.0 / (1 << DownscaleMipLevel);
-		screen.bytesPerRow = screen.screenInfo.rect.width() >> DownscaleMipLevel; // doesn't need to be perfectly padded
-		const size_t sizeNeeded = (screen.screenInfo.rect.height() >> DownscaleMipLevel) * screen.bytesPerRow;
+		const int level = clampDownscaleLevel(_context->downscaleLevel.load());
+		screen.scale = 1.0 / (1 << level);
+		// 4 bytes per pixel: this used to be just the pixel count, so the black buffer was
+		// a quarter of the size the color calculation then read (out-of-bounds read)
+		screen.bytesPerRow = (screen.screenInfo.rect.width() >> level) * 4;
+		const size_t sizeNeeded = (screen.screenInfo.rect.height() >> level) * screen.bytesPerRow;
 		if (screen.imgData == NULL)
 			screen.imgData = (unsigned char*)malloc(sizeNeeded);
 		else if (screen.imgDataSize != sizeNeeded)
@@ -739,74 +790,106 @@ GrabResult DDuplGrabber::grabScreens()
 				continue;
 			}
 			anyUpdate = true;
-			D3D11_TEXTURE2D_DESC texDesc;
-			ZeroMemory(&texDesc, sizeof(texDesc));
-			texDesc.Width = desc.Width >> DownscaleMipLevel;
-			texDesc.Height = desc.Height >> DownscaleMipLevel;
-			texDesc.MipLevels = 1;
-			texDesc.ArraySize = 1;
-			texDesc.SampleDesc.Count = 1;
-			texDesc.SampleDesc.Quality = 0;
-			texDesc.Usage = D3D11_USAGE_STAGING;
-			texDesc.Format = desc.Format;
-			texDesc.BindFlags = 0;
-			texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-			texDesc.MiscFlags = 0;
 
-			// reset texture and data before getting new one
-			if (screenData->textureCopy) {
-				screenData->textureCopy = nullptr;
+			// the staging texture can't be copied into while mapped; release the previous
+			// frame's mapping (or the malloc'd black buffer) before producing a new one
+			if (screenData->mappedSurface) {
+				screenData->unmap();
 			} else if (screen.imgData) {
 				free((void*)screen.imgData);
 			}
-
 			screen.imgData = NULL;
 			screen.imgDataSize = 0;
 
-			hr = screenData->device->CreateTexture2D(&texDesc, NULL, &screenData->textureCopy);
-			if (FAILED(hr))
+			const int level = clampDownscaleLevel(_context->downscaleLevel.load());
+			const UINT copyWidth = desc.Width >> level;
+			const UINT copyHeight = desc.Height >> level;
+
+			// (re)create GPU resources only when something relevant changed
+			if (screenData->textureCopy == nullptr
+				|| screenData->cachedWidth != desc.Width
+				|| screenData->cachedHeight != desc.Height
+				|| screenData->cachedFormat != desc.Format
+				|| screenData->cachedLevel != level)
 			{
-				qCritical(Q_FUNC_INFO " Failed to CreateTexture2D: 0x%X", hr);
-				return GrabResultError;
-			}
+				screenData->textureCopy = nullptr;
+				screenData->scaledTextureView = nullptr;
+				screenData->scaledTexture = nullptr;
+				screenData->cachedLevel = -1; // stays invalid unless everything below succeeds
 
-			if (DownscaleMipLevel > 0) {
-				D3D11_TEXTURE2D_DESC scaledTextureDesc;
-				ZeroMemory(&scaledTextureDesc, sizeof(scaledTextureDesc));
-				scaledTextureDesc.Width = desc.Width;
-				scaledTextureDesc.Height = desc.Height;
-				scaledTextureDesc.MipLevels = DownscaleMipLevel + 1;
-				scaledTextureDesc.ArraySize = 1;
-				scaledTextureDesc.SampleDesc.Count = 1;
-				scaledTextureDesc.SampleDesc.Quality = 0;
-				scaledTextureDesc.Usage = D3D11_USAGE_DEFAULT;
-				scaledTextureDesc.Format = desc.Format;
-				scaledTextureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-				scaledTextureDesc.CPUAccessFlags = 0;
-				scaledTextureDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+				D3D11_TEXTURE2D_DESC texDesc;
+				ZeroMemory(&texDesc, sizeof(texDesc));
+				texDesc.Width = copyWidth;
+				texDesc.Height = copyHeight;
+				texDesc.MipLevels = 1;
+				texDesc.ArraySize = 1;
+				texDesc.SampleDesc.Count = 1;
+				texDesc.SampleDesc.Quality = 0;
+				texDesc.Usage = D3D11_USAGE_STAGING;
+				texDesc.Format = desc.Format;
+				texDesc.BindFlags = 0;
+				texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+				texDesc.MiscFlags = 0;
 
-				ID3D11Texture2DPtr scaledTexture;
-				hr = screenData->device->CreateTexture2D(&scaledTextureDesc, NULL, &scaledTexture);
+				hr = screenData->device->CreateTexture2D(&texDesc, NULL, &screenData->textureCopy);
 				if (FAILED(hr))
 				{
 					qCritical(Q_FUNC_INFO " Failed to CreateTexture2D: 0x%X", hr);
-					return GrabResultError;
-				}
-				ID3D11ShaderResourceViewPtr scaledTextureView;
-				hr = screenData->device->CreateShaderResourceView(scaledTexture, NULL, &scaledTextureView);
-				if (FAILED(hr))
-				{
-					qCritical(Q_FUNC_INFO " Failed to CreateShaderResourceView: 0x%X", hr);
+					screenData->duplication->ReleaseFrame();
 					return GrabResultError;
 				}
 
-				screenData->context->CopySubresourceRegion(scaledTexture, 0, 0, 0, 0, texture, 0, NULL);
-				screenData->context->GenerateMips(scaledTextureView);
+				if (level > 0) {
+					D3D11_TEXTURE2D_DESC scaledTextureDesc;
+					ZeroMemory(&scaledTextureDesc, sizeof(scaledTextureDesc));
+					scaledTextureDesc.Width = desc.Width;
+					scaledTextureDesc.Height = desc.Height;
+					scaledTextureDesc.MipLevels = level + 1;
+					scaledTextureDesc.ArraySize = 1;
+					scaledTextureDesc.SampleDesc.Count = 1;
+					scaledTextureDesc.SampleDesc.Quality = 0;
+					scaledTextureDesc.Usage = D3D11_USAGE_DEFAULT;
+					scaledTextureDesc.Format = desc.Format;
+					scaledTextureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+					scaledTextureDesc.CPUAccessFlags = 0;
+					scaledTextureDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 
-				screenData->context->CopySubresourceRegion(screenData->textureCopy, 0, 0, 0, 0, scaledTexture, DownscaleMipLevel, NULL);
+					hr = screenData->device->CreateTexture2D(&scaledTextureDesc, NULL, &screenData->scaledTexture);
+					if (FAILED(hr))
+					{
+						qCritical(Q_FUNC_INFO " Failed to CreateTexture2D: 0x%X", hr);
+						screenData->textureCopy = nullptr;
+						screenData->duplication->ReleaseFrame();
+						return GrabResultError;
+					}
+					hr = screenData->device->CreateShaderResourceView(screenData->scaledTexture, NULL, &screenData->scaledTextureView);
+					if (FAILED(hr))
+					{
+						qCritical(Q_FUNC_INFO " Failed to CreateShaderResourceView: 0x%X", hr);
+						screenData->textureCopy = nullptr;
+						screenData->scaledTexture = nullptr;
+						screenData->duplication->ReleaseFrame();
+						return GrabResultError;
+					}
+				}
+
+				screenData->cachedWidth = desc.Width;
+				screenData->cachedHeight = desc.Height;
+				screenData->cachedFormat = desc.Format;
+				screenData->cachedLevel = level;
+			}
+
+			if (level > 0) {
+				screenData->context->CopySubresourceRegion(screenData->scaledTexture, 0, 0, 0, 0, texture, 0, NULL);
+				screenData->context->GenerateMips(screenData->scaledTextureView);
+				screenData->context->CopySubresourceRegion(screenData->textureCopy, 0, 0, 0, 0, screenData->scaledTexture, level, NULL);
 			}
 			else
 				screenData->context->CopyResource(screenData->textureCopy, texture);
+
+			// the desktop image has been copied on the GPU; hand the frame back to DXGI
+			// before the (potentially blocking) CPU map instead of after it
+			screenData->duplication->ReleaseFrame();
 
 			IDXGISurface1Ptr surface;
 			hr = screenData->textureCopy->QueryInterface(IID_IDXGISurface1, (void**)&surface);
@@ -822,14 +905,13 @@ GrabResult DDuplGrabber::grabScreens()
 				qCritical(Q_FUNC_INFO " Failed to get surface map: 0x%X", hr);
 				return GrabResultError;
 			}
+			screenData->mappedSurface = surface;
 
 			screen.imgData = screenData->surfaceMap.pBits;
-			screen.imgDataSize = texDesc.Height * screenData->surfaceMap.Pitch;
+			screen.imgDataSize = copyHeight * screenData->surfaceMap.Pitch;
 			screen.imgFormat = bufferFormat;
-			screen.scale = 1.0 / (1 << DownscaleMipLevel);
+			screen.scale = 1.0 / (1 << level);
 			screen.bytesPerRow = screenData->surfaceMap.Pitch;
-
-			screenData->duplication->ReleaseFrame();
 		}
 
 		if (!anyUpdate)

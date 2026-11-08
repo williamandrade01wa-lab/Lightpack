@@ -164,6 +164,13 @@ public:
 	// Profile
 	static int getGrabSlowdown();
 	static void setGrabSlowdown(int value);
+	// performance tuning (see SettingsDefaults.hpp for ranges)
+	static int getGrabDownscaleLevel();
+	static void setGrabDownscaleLevel(int level);
+	static bool isFullscreenWatchdogEnabled();
+	static void setFullscreenWatchdogEnabled(bool isEnabled);
+	static int getWatchdogStallMs();
+	static void setWatchdogStallMs(int ms);
 	static bool isBacklightEnabled();
 	static void setIsBacklightEnabled(bool isEnabled);
 	static bool isGrabAvgColorsEnabled();
@@ -348,6 +355,7 @@ signals:
 	void virtualLedMilliAmpsChanged(const int mAmps);
 	void virtualPowerSupplyAmpsChanged(const double amps);
 	void grabSlowdownChanged(int value);
+	void grabPerformanceChanged();
 	void backlightEnabledChanged(bool isEnabled);
 	void grabAvgColorsEnabledChanged(bool isEnabled);
 	void grabOverBrightenChanged(int value);

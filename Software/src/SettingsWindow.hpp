@@ -47,6 +47,10 @@ namespace Ui {
 
 class GrabManager; // forward declaration
 class SysTrayIcon;
+class QGroupBox;
+class QSlider;
+class QCheckBox;
+class QSpinBox;
 
 class SettingsWindow : public QMainWindow {
 	Q_OBJECT
@@ -261,6 +265,10 @@ private:
 	void initGrabbersRadioButtonsVisibility();
 	void initVirtualLeds(int ledsCount);
 
+	void setupPerformanceControls();
+	void refreshPerformanceControls();
+	void updateDownscaleLabel(int level);
+
 	void adjustSizeAndMoveCenter();
 
 	void setupHotkeys();
@@ -301,6 +309,13 @@ private:
 	QLabel *labelFPS;
 	double m_maxFPS{ 0 };
 	QTimer m_baudrateWarningClearTimer;
+
+	// performance group (screen grabbing page), only created where the DXGI grabber exists
+	QGroupBox *m_groupPerformance{ nullptr };
+	QSlider *m_sliderDownscale{ nullptr };
+	QLabel *m_labelDownscaleValue{ nullptr };
+	QCheckBox *m_checkWatchdog{ nullptr };
+	QSpinBox *m_spinWatchdogStall{ nullptr };
 
 	QCache<QString, QPixmap> m_pixmapCache;
 

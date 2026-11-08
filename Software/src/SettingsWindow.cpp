@@ -44,6 +44,11 @@
 #include <QStringBuilder>
 #include <QScrollBar>
 #include <QMessageBox>
+#include <QGroupBox>
+#include <QGridLayout>
+#include <QSlider>
+#include <QCheckBox>
+#include <QSpinBox>
 #include "PrismatikMath.hpp"
 
 using namespace SettingsScope;
@@ -111,6 +116,8 @@ SettingsWindow::SettingsWindow(QWidget *parent) :
 	tabBar->hide();
 
 	initPixmapCache();
+
+	setupPerformanceControls();
 
 
 	m_labelStatusIcon = new QLabel(statusBar());
@@ -1258,6 +1265,92 @@ void SettingsWindow::onDx9CaptureEnabledChanged(bool isEnabled) {
 	}
 }
 
+// Performance group on the screen grabbing page. Built in code (not in the .ui)
+// so it stays a self-contained addition to the large designer file.
+void SettingsWindow::setupPerformanceControls()
+{
+	m_groupPerformance = nullptr;
+	m_sliderDownscale = nullptr;
+	m_labelDownscaleValue = nullptr;
+	m_checkWatchdog = nullptr;
+	m_spinWatchdogStall = nullptr;
+#ifdef DDUPL_GRAB_SUPPORT
+	m_groupPerformance = new QGroupBox(tr("Performance"), ui->page);
+	QGridLayout *layout = new QGridLayout(m_groupPerformance);
+
+	QLabel *labelDownscale = new QLabel(tr("Capture resolution:"), m_groupPerformance);
+	m_sliderDownscale = new QSlider(Qt::Horizontal, m_groupPerformance);
+	m_sliderDownscale->setRange(SettingsScope::Profile::Grab::DownscaleLevelMin, SettingsScope::Profile::Grab::DownscaleLevelMax);
+	m_sliderDownscale->setPageStep(1);
+	m_sliderDownscale->setTickPosition(QSlider::TicksBelow);
+	m_sliderDownscale->setInvertedAppearance(true); // left = lighter load, right = more detail
+	m_sliderDownscale->setToolTip(tr("How much the screen is scaled down on the GPU before colors are computed.\n"
+		"Lower resolution = less GPU/CPU load. Zone colors barely change; "
+		"only very small zones benefit from more detail. Default: 1/8 (DXGI grabber)."));
+	m_labelDownscaleValue = new QLabel(m_groupPerformance);
+	m_labelDownscaleValue->setMinimumWidth(110);
+
+	m_checkWatchdog = new QCheckBox(tr("Recover capture in fullscreen apps after"), m_groupPerformance);
+	m_checkWatchdog->setToolTip(tr("Some games and video players stop the desktop capture when they go fullscreen, "
+		"freezing the LEDs.\nWhile a fullscreen window is focused on a captured screen and no new image arrives "
+		"for this long, the capture is recreated (retrying less often while the image stays static)."));
+	m_spinWatchdogStall = new QSpinBox(m_groupPerformance);
+	m_spinWatchdogStall->setRange(SettingsScope::Profile::Grab::WatchdogStallMsMin, SettingsScope::Profile::Grab::WatchdogStallMsMax);
+	m_spinWatchdogStall->setSingleStep(250);
+	m_spinWatchdogStall->setSuffix(tr(" ms"));
+	m_spinWatchdogStall->setToolTip(tr("Lower = recovers faster, but may also recreate the capture during short static scenes."));
+
+	layout->addWidget(labelDownscale, 0, 0);
+	layout->addWidget(m_sliderDownscale, 0, 1);
+	layout->addWidget(m_labelDownscaleValue, 0, 2);
+	layout->addWidget(m_checkWatchdog, 1, 0, 1, 2);
+	layout->addWidget(m_spinWatchdogStall, 1, 2);
+	layout->setColumnStretch(1, 1);
+
+	ui->verticalLayout_8->addWidget(m_groupPerformance);
+
+	connect(m_sliderDownscale, &QSlider::valueChanged, this, [this](int level) {
+		updateDownscaleLabel(level);
+		Settings::setGrabDownscaleLevel(level);
+	});
+	connect(m_checkWatchdog, &QCheckBox::toggled, this, [this](bool enabled) {
+		m_spinWatchdogStall->setEnabled(enabled);
+		Settings::setFullscreenWatchdogEnabled(enabled);
+	});
+	connect(m_spinWatchdogStall, qOverload<int>(&QSpinBox::valueChanged), this, [](int ms) {
+		Settings::setWatchdogStallMs(ms);
+	});
+
+	refreshPerformanceControls();
+#endif
+}
+
+void SettingsWindow::updateDownscaleLabel(int level)
+{
+	if (!m_labelDownscaleValue)
+		return;
+	const int divisor = 1 << level;
+	QString text = (divisor == 1) ? tr("Full (highest load)") : tr("1/%1").arg(divisor);
+	if (level == SettingsScope::Profile::Grab::DownscaleLevelDefault)
+		text += tr(" (default)");
+	m_labelDownscaleValue->setText(text);
+}
+
+void SettingsWindow::refreshPerformanceControls()
+{
+	if (!m_groupPerformance)
+		return;
+	// don't write the values we are just displaying back to the settings
+	const QSignalBlocker blockSlider(m_sliderDownscale);
+	const QSignalBlocker blockCheck(m_checkWatchdog);
+	const QSignalBlocker blockSpin(m_spinWatchdogStall);
+	m_sliderDownscale->setValue(Settings::getGrabDownscaleLevel());
+	updateDownscaleLabel(m_sliderDownscale->value());
+	m_checkWatchdog->setChecked(Settings::isFullscreenWatchdogEnabled());
+	m_spinWatchdogStall->setValue(Settings::getWatchdogStallMs());
+	m_spinWatchdogStall->setEnabled(m_checkWatchdog->isChecked());
+}
+
 void SettingsWindow::onGrabSlowdown_valueChanged(int value)
 {
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO << value;
@@ -1904,6 +1997,7 @@ void SettingsWindow::updateUiFromSettings()
 
 	ui->checkBox_GrabIsAvgColors->setChecked							(Settings::isGrabAvgColorsEnabled());
 	ui->spinBox_GrabSlowdown->setValue								(Settings::getGrabSlowdown());
+	refreshPerformanceControls();
 	ui->spinBox_GrabOverBrighten->setValue							(Settings::getGrabOverBrighten());
 	ui->checkBox_GrabApplyBlueLightReduction->setChecked						(Settings::isGrabApplyBlueLightReductionEnabled());
 	ui->checkBox_GrabApplyColorTemperature->setChecked              (Settings::isGrabApplyColorTemperatureEnabled());

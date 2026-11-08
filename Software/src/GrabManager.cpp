@@ -75,6 +75,7 @@ GrabManager::GrabManager(QWidget *parent) : QObject(parent)
 	m_blueLightClient = nullptr;
 
 	m_grabberContext = new GrabberContext();
+	onGrabPerformanceChanged();
 
 	m_isSendDataOnlyIfColorsChanged = Settings::isSendDataOnlyIfColorsChanges();
 
@@ -266,6 +267,18 @@ void GrabManager::onGrabSlowdownChanged(int ms)
 		qWarning() << Q_FUNC_INFO << "trying to change grab slowdown while there is no grabber";
 }
 
+void GrabManager::onGrabPerformanceChanged()
+{
+	// grabbers read these atomics on every tick, so changes apply on the next frame
+	m_grabberContext->downscaleLevel = Settings::getGrabDownscaleLevel();
+	m_grabberContext->fullscreenWatchdogEnabled = Settings::isFullscreenWatchdogEnabled();
+	m_grabberContext->watchdogStallMs = Settings::getWatchdogStallMs();
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO
+		<< "downscale" << m_grabberContext->downscaleLevel.load()
+		<< "watchdog" << m_grabberContext->fullscreenWatchdogEnabled.load()
+		<< m_grabberContext->watchdogStallMs.load() << "ms";
+}
+
 void GrabManager::onGrabAvgColorsEnabledChanged(bool state)
 {
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO << state;
@@ -364,6 +377,7 @@ void GrabManager::settingsProfileChanged(const QString &profileName)
 	m_isApplyColorTemperature = Settings::isGrabApplyColorTemperatureEnabled();
 	m_colorTemperature = Settings::getGrabColorTemperature();
 	m_gamma = Settings::getGrabGamma();
+	onGrabPerformanceChanged();
 
 	setNumberOfLeds(Settings::getNumberOfLeds(Settings::getConnectedDevice()));
 }

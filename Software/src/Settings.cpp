@@ -200,6 +200,9 @@ static const QString IsApplyBlueLightReductionEnabled = QStringLiteral("Grab/IsA
 static const QString IsApplyColorTemperatureEnabled = QStringLiteral("Grab/IsApplyColorTemperatureEnabled");
 static const QString ColorTemperature = QStringLiteral("Grab/ColorTemperature");
 static const QString Gamma = QStringLiteral("Grab/Gamma");
+static const QString DownscaleLevel = QStringLiteral("Grab/DownscaleLevel");
+static const QString IsFullscreenWatchdogEnabled = QStringLiteral("Grab/IsFullscreenWatchdogEnabled");
+static const QString WatchdogStallMs = QStringLiteral("Grab/WatchdogStallMs");
 }
 // [MoodLamp]
 namespace MoodLamp
@@ -1301,6 +1304,42 @@ void Settings::setGrabSlowdown(int value)
 	emit m_this->grabSlowdownChanged(value);
 }
 
+int Settings::getGrabDownscaleLevel()
+{
+	return qBound(Profile::Grab::DownscaleLevelMin, value(Profile::Key::Grab::DownscaleLevel).toInt(), Profile::Grab::DownscaleLevelMax);
+}
+
+void Settings::setGrabDownscaleLevel(int level)
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << level;
+	setValue(Profile::Key::Grab::DownscaleLevel, qBound(Profile::Grab::DownscaleLevelMin, level, Profile::Grab::DownscaleLevelMax));
+	emit m_this->grabPerformanceChanged();
+}
+
+bool Settings::isFullscreenWatchdogEnabled()
+{
+	return value(Profile::Key::Grab::IsFullscreenWatchdogEnabled).toBool();
+}
+
+void Settings::setFullscreenWatchdogEnabled(bool isEnabled)
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << isEnabled;
+	setValue(Profile::Key::Grab::IsFullscreenWatchdogEnabled, isEnabled);
+	emit m_this->grabPerformanceChanged();
+}
+
+int Settings::getWatchdogStallMs()
+{
+	return qBound(Profile::Grab::WatchdogStallMsMin, value(Profile::Key::Grab::WatchdogStallMs).toInt(), Profile::Grab::WatchdogStallMsMax);
+}
+
+void Settings::setWatchdogStallMs(int ms)
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << ms;
+	setValue(Profile::Key::Grab::WatchdogStallMs, qBound(Profile::Grab::WatchdogStallMsMin, ms, Profile::Grab::WatchdogStallMsMax));
+	emit m_this->grabPerformanceChanged();
+}
+
 bool Settings::isBacklightEnabled()
 {
 	return value(Profile::Key::IsBacklightEnabled).toBool();
@@ -2113,6 +2152,9 @@ void Settings::initCurrentProfile(bool isResetDefault)
 	setNewOption(Profile::Key::Grab::IsApplyColorTemperatureEnabled,Profile::Grab::IsApplyColorTemperatureEnabledDefault, isResetDefault);
 	setNewOption(Profile::Key::Grab::ColorTemperature,              Profile::Grab::ColorTemperatureDefault, isResetDefault);
 	setNewOption(Profile::Key::Grab::Gamma,                         Profile::Grab::GammaDefault, isResetDefault);
+	setNewOption(Profile::Key::Grab::DownscaleLevel,                Profile::Grab::DownscaleLevelDefault, isResetDefault);
+	setNewOption(Profile::Key::Grab::IsFullscreenWatchdogEnabled,   Profile::Grab::IsFullscreenWatchdogEnabledDefault, isResetDefault);
+	setNewOption(Profile::Key::Grab::WatchdogStallMs,               Profile::Grab::WatchdogStallMsDefault, isResetDefault);
 	// [MoodLamp]
 	setNewOption(Profile::Key::MoodLamp::IsLiquidMode,				Profile::MoodLamp::IsLiquidModeDefault, isResetDefault);
 	setNewOption(Profile::Key::MoodLamp::Color,						Profile::MoodLamp::ColorDefault, isResetDefault);

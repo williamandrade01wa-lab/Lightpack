@@ -29,6 +29,7 @@
 
 #include <QList>
 #include <QRgb>
+#include <atomic>
 
 class GrabWidget;
 
@@ -97,6 +98,15 @@ public:
 public:
 	QList<GrabWidget *> *grabWidgets;
 	QList<QRgb> *grabResult;
+
+	// User tunable performance knobs (written from the GUI thread, read by grabbers).
+	// Capture downscale as a power of two: 0 = full resolution ... 4 = 1/16.
+	// Higher = less GPU/CPU work per frame; zone averages barely change.
+	std::atomic<int> downscaleLevel{3};
+	// Recreate a stalled capture while a fullscreen window is focused (DXGI grabber).
+	std::atomic<bool> fullscreenWatchdogEnabled{true};
+	// How long without a new frame (fullscreen focused) before the watchdog acts.
+	std::atomic<int> watchdogStallMs{2500};
 
 
 private:

@@ -770,6 +770,7 @@ void LightpackApplication::initGrabManager()
 
 	connect(settings(), &Settings::grabberTypeChanged,	m_grabManager, &GrabManager::onGrabberTypeChanged,	Qt::QueuedConnection);
 	connect(settings(), &Settings::grabSlowdownChanged,						m_grabManager, &GrabManager::onGrabSlowdownChanged,						Qt::QueuedConnection);
+	connect(settings(), &Settings::grabPerformanceChanged,					m_grabManager, &GrabManager::onGrabPerformanceChanged,					Qt::QueuedConnection);
 	connect(settings(), &Settings::grabAvgColorsEnabledChanged,				m_grabManager, &GrabManager::onGrabAvgColorsEnabledChanged,				Qt::QueuedConnection);
 	connect(settings(), &Settings::grabOverBrightenChanged,					m_grabManager, &GrabManager::onGrabOverBrightenChanged,					Qt::QueuedConnection);
 	connect(settings(), &Settings::grabApplyBlueLightReductionChanged,				m_grabManager, &GrabManager::onGrabApplyBlueLightReductionChanged,				Qt::QueuedConnection);
