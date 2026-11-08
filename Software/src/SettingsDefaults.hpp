@@ -76,6 +76,8 @@ namespace Main
 static const QString ProfileNameDefault = QStringLiteral("Lightpack");
 static const QString LanguageDefault = QStringLiteral("<System>");
 static const Debug::DebugLevels DebugLevelDefault = Debug::ZeroLevel;
+// Settings window opens in the simple dashboard (Basic) unless the user picked Expert
+static const bool IsExpertModeDefault = false;
 static const bool IsKeepLightsOnAfterExit = false;
 static const bool IsKeepLightsOnAfterLock = true;
 static const bool IsKeepLightsOnAfterSuspend = false;

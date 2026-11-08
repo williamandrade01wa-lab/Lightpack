@@ -51,6 +51,9 @@ class QGroupBox;
 class QSlider;
 class QCheckBox;
 class QSpinBox;
+class QStackedWidget;
+class QPushButton;
+class BasicPanel;
 
 class SettingsWindow : public QMainWindow {
 	Q_OBJECT
@@ -111,6 +114,7 @@ public slots:
 	void handleProfileLoaded(const QString & configName);
 	void profileSwitchCombobox(const QString& profile);
 	void updateVirtualLedsColors(const QList<QRgb> & colors);
+	void updateBasicPreview(const QList<QRgb> & colors);
 	void requestBacklightStatus();
 	void onApiServer_ErrorOnStartListening(const QString& errorMessage);
 	void onPingDeviceEverySecond_Toggled(bool state);
@@ -266,6 +270,11 @@ private:
 	void initVirtualLeds(int ledsCount);
 
 	void applyTheme();
+	void setupBasicMode();
+	void setExpertMode(bool expert);
+	void retranslateModeSwitch();
+	void applyModeSwitchStyle();
+	void refreshBasicPanel();
 	void setupPerformanceControls();
 	void refreshPerformanceControls();
 	void updateDownscaleLabel(int level);
@@ -312,6 +321,12 @@ private:
 	QTimer m_baudrateWarningClearTimer;
 
 	bool m_applyingTheme{ false };
+
+	// Basic / Expert views
+	BasicPanel *m_basicPanel{ nullptr };
+	QStackedWidget *m_viewStack{ nullptr };
+	QPushButton *m_basicModeButton{ nullptr };
+	QPushButton *m_expertModeButton{ nullptr };
 
 	// performance group (screen grabbing page), only created where the DXGI grabber exists
 	QGroupBox *m_groupPerformance{ nullptr };

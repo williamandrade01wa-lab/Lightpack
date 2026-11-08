@@ -49,8 +49,13 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QSpinBox>
+#include <QStackedWidget>
+#include <QButtonGroup>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 #include "PrismatikMath.hpp"
 #include "Theme.hpp"
+#include "BasicPanel.hpp"
 
 using namespace SettingsScope;
 
@@ -120,6 +125,7 @@ SettingsWindow::SettingsWindow(QWidget *parent) :
 
 	setupPerformanceControls();
 	applyTheme();
+	setupBasicMode();
 
 
 	m_labelStatusIcon = new QLabel(statusBar());
@@ -396,6 +402,7 @@ void SettingsWindow::changeEvent(QEvent *e)
 
 
 		ui->comboBox_Language->setItemText(0, tr("System default"));
+		retranslateModeSwitch();
 
 		updateStatusBar();
 
@@ -844,6 +851,11 @@ void SettingsWindow::updateTrayAndActionStates()
 	}
 	if (m_trayIcon)
 		m_labelStatusIcon->setToolTip(m_trayIcon->toolTip());
+
+	if (m_basicPanel) {
+		m_basicPanel->setLightsOn(m_backlightStatus == Backlight::StatusOn);
+		m_basicPanel->setDeviceError(m_backlightStatus == Backlight::StatusDeviceError);
+	}
 }
 
 void SettingsWindow::initGrabbersRadioButtonsVisibility()
@@ -1222,6 +1234,9 @@ void SettingsWindow::refreshAmbilightEvaluated(double updateResultMs)
 	}
 
 	this->labelFPS->setText(tr("FPS: ") + fpsText);
+
+	if (m_basicPanel)
+		m_basicPanel->setStatusText(QStringLiteral("%1 · %2 FPS").arg(Settings::getConnectedDeviceName(), QString::number(hz, 'f', 0)));
 }
 
 void SettingsWindow::clearBaudrateWarning()
@@ -1272,12 +1287,152 @@ void SettingsWindow::onDx9CaptureEnabledChanged(bool isEnabled) {
 	}
 }
 
+// Basic / Expert modes. The original window content becomes the "Expert" view;
+// a simple dashboard (BasicPanel) is the "Basic" view. A segmented switch in
+// the top bar flips between them and the choice is remembered (main.conf).
+void SettingsWindow::setupBasicMode()
+{
+	QWidget *expertView = takeCentralWidget(); // ui->centralwidget, unchanged
+
+	QWidget *container = new QWidget(this);
+	QVBoxLayout *layout = new QVBoxLayout(container);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(0);
+
+	// top bar: app name + Basic | Expert segmented switch
+	QWidget *topBar = new QWidget(container);
+	QHBoxLayout *topLayout = new QHBoxLayout(topBar);
+	topLayout->setContentsMargins(16, 10, 16, 6);
+	QLabel *appName = new QLabel(QStringLiteral("Prismatik"), topBar);
+	QFont nameFont = appName->font();
+	nameFont.setPointSizeF(nameFont.pointSizeF() * 1.25);
+	nameFont.setBold(true);
+	appName->setFont(nameFont);
+	topLayout->addWidget(appName);
+	topLayout->addStretch(1);
+
+	m_basicModeButton = new QPushButton(topBar);
+	m_expertModeButton = new QPushButton(topBar);
+	m_basicModeButton->setObjectName(QStringLiteral("segmentLeft"));
+	m_expertModeButton->setObjectName(QStringLiteral("segmentRight"));
+	QButtonGroup *segment = new QButtonGroup(topBar);
+	for (QPushButton *button : { m_basicModeButton, m_expertModeButton }) {
+		button->setCheckable(true);
+		button->setCursor(Qt::PointingHandCursor);
+		button->setFocusPolicy(Qt::TabFocus);
+		segment->addButton(button);
+	}
+	QHBoxLayout *segmentLayout = new QHBoxLayout();
+	segmentLayout->setSpacing(0);
+	segmentLayout->addWidget(m_basicModeButton);
+	segmentLayout->addWidget(m_expertModeButton);
+	topLayout->addLayout(segmentLayout);
+
+	m_viewStack = new QStackedWidget(container);
+	m_basicPanel = new BasicPanel(m_viewStack);
+	m_viewStack->addWidget(m_basicPanel);
+	m_viewStack->addWidget(expertView);
+
+	layout->addWidget(topBar);
+	layout->addWidget(m_viewStack, 1);
+	setCentralWidget(container);
+
+#ifndef SOUNDVIZ_SUPPORT
+	m_basicPanel->setSoundModeAvailable(false);
+#endif
+
+	// Basic panel requests -> the existing controls, so both views stay in sync
+	connect(m_basicPanel, &BasicPanel::toggleLightsRequested, this, &SettingsWindow::toggleBacklight);
+	connect(m_basicPanel, &BasicPanel::profileRequested, this, &SettingsWindow::profileSwitchCombobox);
+	connect(m_basicPanel, &BasicPanel::modeRequested, this, [this](int index) {
+		if (index < ui->comboBox_LightpackModes->count())
+			ui->comboBox_LightpackModes->setCurrentIndex(index);
+	});
+	connect(m_basicPanel, &BasicPanel::brightnessRequested, ui->spinBox_DeviceBrightness, &QSpinBox::setValue);
+	connect(m_basicPanel, &BasicPanel::wizardRequested, this, &SettingsWindow::onRunConfigurationWizard_clicked);
+	connect(m_basicPanel, &BasicPanel::expertModeRequested, this, [this] { setExpertMode(true); });
+	// Expert controls -> Basic panel
+	connect(ui->spinBox_DeviceBrightness, qOverload<int>(&QSpinBox::valueChanged), m_basicPanel, &BasicPanel::setBrightness);
+	connect(ui->comboBox_LightpackModes, qOverload<int>(&QComboBox::currentIndexChanged), m_basicPanel, &BasicPanel::setMode);
+
+	connect(m_basicModeButton, &QPushButton::clicked, this, [this] { setExpertMode(false); });
+	connect(m_expertModeButton, &QPushButton::clicked, this, [this] { setExpertMode(true); });
+
+	retranslateModeSwitch();
+	applyModeSwitchStyle();
+	setExpertMode(Settings::isExpertMode());
+}
+
+void SettingsWindow::setExpertMode(bool expert)
+{
+	if (!m_viewStack)
+		return;
+	m_viewStack->setCurrentIndex(expert ? 1 : 0);
+	m_basicModeButton->setChecked(!expert);
+	m_expertModeButton->setChecked(expert);
+	if (Settings::isExpertMode() != expert)
+		Settings::setExpertMode(expert);
+}
+
+void SettingsWindow::retranslateModeSwitch()
+{
+	if (!m_basicModeButton)
+		return;
+	m_basicModeButton->setText(tr("Basic"));
+	m_basicModeButton->setToolTip(tr("The essentials on one simple screen"));
+	m_expertModeButton->setText(tr("Expert"));
+	m_expertModeButton->setToolTip(tr("Every setting, for fine-tuning"));
+}
+
+void SettingsWindow::applyModeSwitchStyle()
+{
+	if (!m_basicModeButton)
+		return;
+	const QPalette pal = palette();
+	QColor accent = pal.color(QPalette::Highlight);
+	const bool dark = pal.color(QPalette::Window).lightness() < 128;
+	if (dark && accent.lightness() < 140)
+		accent = accent.lighter(140);
+	QColor border = pal.color(QPalette::WindowText);
+	border.setAlpha(60);
+	const QColor onAccent = accent.lightness() > 150 ? QColor(Qt::black) : QColor(Qt::white);
+	const QString css = QStringLiteral(
+		"QPushButton { background: transparent; border: 1px solid %1; padding: 4px 16px; min-height: 22px; }"
+		"QPushButton:checked { background: %2; border-color: %2; color: %3; font-weight: 600; }"
+		"QPushButton#segmentLeft { border-top-left-radius: 8px; border-bottom-left-radius: 8px; border-right: none; }"
+		"QPushButton#segmentRight { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }")
+		.arg(border.name(QColor::HexArgb), accent.name(), onAccent.name());
+	m_basicModeButton->setStyleSheet(css);
+	m_expertModeButton->setStyleSheet(css);
+}
+
+void SettingsWindow::refreshBasicPanel()
+{
+	if (!m_basicPanel)
+		return;
+	QStringList profiles;
+	for (int i = 0; i < ui->comboBox_Profiles->count(); ++i)
+		profiles << ui->comboBox_Profiles->itemText(i);
+	m_basicPanel->setProfiles(profiles, Settings::getCurrentProfileName());
+	m_basicPanel->setMode(ui->comboBox_LightpackModes->currentIndex());
+	m_basicPanel->setBrightness(Settings::getDeviceBrightness());
+	m_basicPanel->setStatusText(Settings::getConnectedDeviceName());
+}
+
+void SettingsWindow::updateBasicPreview(const QList<QRgb> &colors)
+{
+	// only spend time on the preview while it can actually be seen
+	if (m_basicPanel && isVisible() && m_viewStack->currentWidget() == m_basicPanel)
+		m_basicPanel->setColors(colors);
+}
+
 void SettingsWindow::applyTheme()
 {
 	m_applyingTheme = true;
 	Theme::applySidebar(ui->listWidget);
 	Theme::applyWindow(this, ui->pushButton_EnableDisableDevice);
 	Theme::applyHelpButtons(this);
+	applyModeSwitchStyle();
 	m_applyingTheme = false;
 }
 
@@ -2014,6 +2169,7 @@ void SettingsWindow::updateUiFromSettings()
 	ui->checkBox_GrabIsAvgColors->setChecked							(Settings::isGrabAvgColorsEnabled());
 	ui->spinBox_GrabSlowdown->setValue								(Settings::getGrabSlowdown());
 	refreshPerformanceControls();
+	refreshBasicPanel();
 	ui->spinBox_GrabOverBrighten->setValue							(Settings::getGrabOverBrighten());
 	ui->checkBox_GrabApplyBlueLightReduction->setChecked						(Settings::isGrabApplyBlueLightReductionEnabled());
 	ui->checkBox_GrabApplyColorTemperature->setChecked              (Settings::isGrabApplyColorTemperatureEnabled());

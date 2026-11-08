@@ -841,15 +841,21 @@ void LightpackApplication::initGrabManager()
 
 	connect(m_grabManager, &GrabManager::updateLedsColors,	m_ledDeviceManager, &LedDeviceManager::setColors, Qt::QueuedConnection);
 	connect(m_moodlampManager, &MoodLampManager::updateLedsColors,	m_ledDeviceManager, &LedDeviceManager::setColors, Qt::QueuedConnection);
-	if (!m_noGui && m_settingsWindow)
+	if (!m_noGui && m_settingsWindow) {
 		connect(m_moodlampManager, &MoodLampManager::moodlampFrametime,		m_settingsWindow, &SettingsWindow::refreshAmbilightEvaluated, Qt::QueuedConnection);
+		// live LED preview in the Basic view (the slot ignores frames while it's hidden)
+		connect(m_grabManager, &GrabManager::updateLedsColors,		m_settingsWindow, &SettingsWindow::updateBasicPreview, Qt::QueuedConnection);
+		connect(m_moodlampManager, &MoodLampManager::updateLedsColors,	m_settingsWindow, &SettingsWindow::updateBasicPreview, Qt::QueuedConnection);
+	}
 	connect(m_ledDeviceManager, &LedDeviceManager::openDeviceSuccess,				m_grabManager, &GrabManager::ledDeviceOpenSuccess, Qt::QueuedConnection);
 	connect(m_ledDeviceManager, &LedDeviceManager::ioDeviceSuccess,					m_grabManager, &GrabManager::ledDeviceCallSuccess, Qt::QueuedConnection);
 #ifdef SOUNDVIZ_SUPPORT
 	if (m_soundManager) {
 		connect(m_soundManager, &SoundManagerBase::updateLedsColors,	m_ledDeviceManager, &LedDeviceManager::setColors, Qt::QueuedConnection);
-		if (!m_noGui && m_settingsWindow)
+		if (!m_noGui && m_settingsWindow) {
 			connect(m_soundManager, &SoundManagerBase::visualizerFrametime,	m_settingsWindow, &SettingsWindow::refreshAmbilightEvaluated, Qt::QueuedConnection);
+			connect(m_soundManager, &SoundManagerBase::updateLedsColors,	m_settingsWindow, &SettingsWindow::updateBasicPreview, Qt::QueuedConnection);
+		}
 	}
 #endif
 }
