@@ -89,6 +89,12 @@ protected:
 	void freeScreens();
 	GrabResult returnBlackBuffer();
 	bool runThreadCommand(DWORD timeout);
+	// Watchdog: Desktop Duplication can silently stop delivering frames
+	// (or keep failing) after fullscreen/exclusive-mode transitions.
+	// These detect that state so the duplication can be recreated.
+	bool isWatchdogTriggered() const;
+	static bool isForegroundWindowFullscreen();
+	void requestRecovery(const char *reason);
 
 private:
 	QList<IDXGIAdapter1Ptr> m_adapters;
@@ -107,6 +113,15 @@ private:
 	QList<ScreenInfo> m_threadReallocateArg;
 	bool m_threadReallocateResult;
 	bool m_isSessionLocked;
+
+	DWORD m_lastNewFrameTick;      // last time a new frame was acquired (or duplication recreated)
+	// the foreground probe is cheap but not free; cache it between grab ticks
+	mutable bool m_cachedForegroundFullscreen;
+	mutable DWORD m_foregroundProbeTick;
+	quint32 m_watchdogRecoveries;
+	// consecutive watchdog recoveries without a new frame since (e.g. a paused fullscreen video);
+	// used to back off so a genuinely static fullscreen image isn't recreated every few seconds
+	quint32 m_watchdogBackoff;
 };
 
 

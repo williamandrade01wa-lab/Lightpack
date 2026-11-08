@@ -60,6 +60,12 @@ typedef HRESULT(WINAPI *D3D11CreateDeviceFunc)(
 #define ACCESSDENIED_DESKTOP_RETRY_INTERVAL 1000
 #define ACCESSDENIED_DUPLICATION_RETRY_INTERVAL 5000
 #define THREAD_DESTRUCTION_WAIT_TIMEOUT 3000
+// Watchdog: if a fullscreen app is in the foreground and no new frame arrived
+// for this long, assume the duplication went stale and recreate it.
+// (On a static desktop no frames arriving is normal, so the watchdog only
+// arms while a fullscreen window is focused.)
+#define WATCHDOG_STALL_INTERVAL 2500
+#define WATCHDOG_FOREGROUND_PROBE_INTERVAL 500
 
 namespace {
 	// 0 = /1 (no scaling)
@@ -117,8 +123,66 @@ DDuplGrabber::DDuplGrabber(QObject * parent, GrabberContext *context)
 	m_threadReturnEvent(NULL),
 	m_threadReallocateArg(),
 	m_threadReallocateResult(false),
-	m_isSessionLocked(false)
+	m_isSessionLocked(false),
+	m_lastNewFrameTick(0),
+	m_cachedForegroundFullscreen(false),
+	m_foregroundProbeTick(0),
+	m_watchdogRecoveries(0),
+	m_watchdogBackoff(0)
 {
+}
+
+bool DDuplGrabber::isForegroundWindowFullscreen()
+{
+	HWND fg = GetForegroundWindow();
+	if (fg == NULL || fg == GetDesktopWindow() || fg == GetShellWindow())
+		return false;
+
+	// The desktop itself (Progman/WorkerW) covers the monitor but is not "fullscreen content"
+	wchar_t className[64] = { 0 };
+	if (GetClassNameW(fg, className, ARRAYSIZE(className)) > 0
+		&& (wcscmp(className, L"Progman") == 0 || wcscmp(className, L"WorkerW") == 0))
+		return false;
+
+	RECT windowRect;
+	if (!GetWindowRect(fg, &windowRect))
+		return false;
+
+	MONITORINFO monitorInfo;
+	monitorInfo.cbSize = sizeof(monitorInfo);
+	if (!GetMonitorInfo(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &monitorInfo))
+		return false;
+
+	// borderless and exclusive fullscreen windows both cover (at least) the whole monitor
+	return windowRect.left <= monitorInfo.rcMonitor.left
+		&& windowRect.top <= monitorInfo.rcMonitor.top
+		&& windowRect.right >= monitorInfo.rcMonitor.right
+		&& windowRect.bottom >= monitorInfo.rcMonitor.bottom;
+}
+
+bool DDuplGrabber::isWatchdogTriggered() const
+{
+	const DWORD now = GetTickCount();
+	// 2.5s, 5s, 10s, then every 20s while the image stays static
+	const DWORD stallInterval = WATCHDOG_STALL_INTERVAL << qMin<quint32>(m_watchdogBackoff, 3);
+	if (now - m_lastNewFrameTick < stallInterval)
+		return false;
+
+	if (now - m_foregroundProbeTick >= WATCHDOG_FOREGROUND_PROBE_INTERVAL)
+	{
+		m_cachedForegroundFullscreen = isForegroundWindowFullscreen();
+		m_foregroundProbeTick = now;
+	}
+	return m_cachedForegroundFullscreen;
+}
+
+void DDuplGrabber::requestRecovery(const char *reason)
+{
+	++m_watchdogRecoveries;
+	qWarning() << Q_FUNC_INFO << "recreating desktop duplication:" << reason << "(recovery #" << m_watchdogRecoveries << ")";
+	m_state = LostAccess; // isReallocationNeeded() returns true for LostAccess
+	// avoid back-to-back recoveries while the reallocation is pending
+	m_lastNewFrameTick = GetTickCount();
 }
 
 DDuplGrabber::~DDuplGrabber()
@@ -502,6 +566,8 @@ bool DDuplGrabber::_reallocate(const QList< ScreenInfo > &grabScreens, bool noRe
 	}
 
 	m_state = Allocated;
+	// a fresh duplication counts as "alive" so the watchdog gives it time to deliver frames
+	m_lastNewFrameTick = GetTickCount();
 
 	return true;
 }
@@ -588,6 +654,13 @@ GrabResult DDuplGrabber::grabScreens()
 		}
 	}
 
+	if (isWatchdogTriggered())
+	{
+		++m_watchdogBackoff;
+		requestRecovery("no new frames while a fullscreen window is focused");
+		return GrabResultFrameNotReady;
+	}
+
 	try
 	{
 		bool anyUpdate = false;
@@ -620,8 +693,11 @@ GrabResult DDuplGrabber::grabScreens()
 			}
 			else if (FAILED(hr))
 			{
+				// e.g. DXGI_ERROR_DEVICE_REMOVED/RESET when a game switches GPU modes.
+				// Returning an error alone would keep failing forever; recreate instead.
 				qCritical(Q_FUNC_INFO " Failed to AcquireNextFrame: 0x%X", hr);
-				return GrabResultError;
+				requestRecovery("AcquireNextFrame failed");
+				return GrabResultFrameNotReady;
 			}
 			if (frameInfo.LastPresentTime.QuadPart == 0) {
 				// No update since last aquisition. Consider it done.
@@ -648,7 +724,12 @@ GrabResult DDuplGrabber::grabScreens()
 					screen.screenInfo.rect.height(),
 					desc.Width,
 					desc.Height);
-				return GrabResultError;
+				// Typical when a fullscreen game changes resolution without Qt noticing yet.
+				// Previously this returned an error on every tick and capture stayed dead;
+				// release the frame and recreate the duplication for the new mode instead.
+				screenData->duplication->ReleaseFrame();
+				requestRecovery("frame size does not match screen (resolution change?)");
+				return GrabResultFrameNotReady;
 			}
 			BufferFormat bufferFormat = mapDXGIFormatToBufferFormat(desc.Format);
 			if (bufferFormat == BufferFormat::BufferFormatUnknown) {
@@ -753,6 +834,8 @@ GrabResult DDuplGrabber::grabScreens()
 
 		if (!anyUpdate)
 			return GrabResultFrameNotReady;
+		m_lastNewFrameTick = GetTickCount();
+		m_watchdogBackoff = 0;
 	}
 	catch (_com_error e)
 	{
