@@ -646,4 +646,15 @@ Se uma janela em tela cheia estiver em foco num monitor capturado e nenhuma imag
         <translation>WinAPI (tela inteira)</translation>
     </message>
 </context>
+<context>
+    <name>ZonePlacementPage</name>
+    <message>
+        <source>reverse bottom row (desk)</source>
+        <translation>inverter fileira de baixo (mesa)</translation>
+    </message>
+    <message>
+        <source>Numbers the bottom row in the opposite direction from the rest of the loop. Use it when the strip goes around the screen and then continues along the desk from left to right.</source>
+        <translation>Numera a fileira de baixo no sentido contrário ao resto da volta. Use quando a fita contorna a tela e depois continua pela mesa da esquerda para a direita.</translation>
+    </message>
+</context>
 </TS>

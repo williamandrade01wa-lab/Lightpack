@@ -28,6 +28,7 @@
 #define ZONECONFIGURATION_HPP
 
 #include <QTimer>
+#include <QCheckBox>
 #include "WizardPageUsingDevice.hpp"
 #include "SettingsAwareTrait.hpp"
 
@@ -73,6 +74,9 @@ private:
 	void cleanupGrabAreas(int idx = -1);
 	void cleanupMonitors();
 	void distributeAreas(AreaDistributor *distributor, bool invertIds = false, int idOffset = 0);
+	// renumber only the bottom row in the opposite direction (e.g. a strip that continues
+	// on the desk left-to-right after going around the screen)
+	bool reverseBottomRow() const;
 	void resetNewAreaRect();
 	bool checkZoneIssues();
 	QRect screenRect() const;
@@ -95,6 +99,7 @@ private:
 
 		bool skipCorners{ false };
 		bool invertOrder{ false };
+		bool reverseBottom{ false };
 
 		QList<GrabWidget*> grabAreas;
 		const QScreen* screen;
@@ -106,6 +111,7 @@ private:
 	QMap<int, MonitorSettings> _screens;
 	QList<GrabWidget*> _zonePool;
 	QTimer _ledNumberUpdate;
+	QCheckBox *_cbReverseBottom{ nullptr };
 };
 
 #endif // ZONECONFIGURATION_HPP

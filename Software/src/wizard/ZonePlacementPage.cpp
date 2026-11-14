@@ -32,6 +32,7 @@
 #include "GrabWidget.hpp"
 #include "LedDeviceLightpack.hpp"
 #include "MonitorIdForm.hpp"
+#include <algorithm>
 
 
 ZonePlacementPage::ZonePlacementPage(bool isInitFromSettings, TransientSettings *ts, QWidget *parent):
@@ -40,6 +41,13 @@ ZonePlacementPage::ZonePlacementPage(bool isInitFromSettings, TransientSettings 
 {
 	_ui->setupUi(this);
 	_ledNumberUpdate.setSingleShot(true);
+
+	// next to "invert order": reverse only the bottom row (desk strip going left-to-right)
+	_cbReverseBottom = new QCheckBox(tr("reverse bottom row (desk)"), this);
+	_cbReverseBottom->setObjectName(QStringLiteral("cbReverseBottom"));
+	_cbReverseBottom->setToolTip(tr("Numbers the bottom row in the opposite direction from the rest of the loop. "
+		"Use it when the strip goes around the screen and then continues along the desk from left to right."));
+	_ui->gridLayout_2->addWidget(_cbReverseBottom, 5, 0, 1, 4);
 }
 
 ZonePlacementPage::~ZonePlacementPage()
@@ -254,6 +262,9 @@ void ZonePlacementPage::distributeAreas(AreaDistributor *distributor, bool inver
 
 	grabAreas.clear();
 	grabAreas.reserve(distributor->areaCount());
+
+	struct Placed { int id; QRect rect; };
+	QList<Placed> placed;
 	for(int i = 0; i < distributor->areaCount(); i++) {
 		const ScreenArea * const sf = distributor->next();
 		qDebug() << sf->hScanStart() << sf->vScanStart();
@@ -264,9 +275,30 @@ void ZonePlacementPage::distributeAreas(AreaDistributor *distributor, bool inver
 				(sf->vScanEnd() - sf->vScanStart()));
 		int id = ((invertIds ? distributor->areaCount() - (i + 1) : i) + idOffset) % distributor->areaCount();
 		id = (id + distributor->areaCount()) % distributor->areaCount();
-		addGrabArea(grabAreas, id + startId, r);
+		placed.append({ id, r });
 		delete sf;
 	}
+
+	if (reverseBottomRow()) {
+		// bottom row = zones in the lower half that don't touch the left/right screen edge
+		// (the side columns do); keep their ids but give them to the zones in reverse order
+		const QRect screen = screenRect();
+		QList<int> bottom;
+		for (int k = 0; k < placed.size(); ++k) {
+			const QRect &r = placed[k].rect;
+			if (r.top() > screen.center().y() && r.left() > screen.left() + 1 && r.right() < screen.right() - 1)
+				bottom.append(k);
+		}
+		std::sort(bottom.begin(), bottom.end(), [&placed](int a, int b) { return placed[a].id < placed[b].id; });
+		QList<QRect> rects;
+		for (int k : bottom)
+			rects.append(placed[k].rect);
+		for (int n = 0; n < bottom.size(); ++n)
+			placed[bottom[n]].rect = rects[bottom.size() - 1 - n];
+	}
+
+	for (const Placed &p : placed)
+		addGrabArea(grabAreas, p.id + startId, p.rect);
 	resetNewAreaRect();
 
 	_transSettings->ledCount = 0;
@@ -301,6 +333,11 @@ void ZonePlacementPage::removeLastGrabArea()
 	QList<GrabWidget*>& grabAreas = _screens[_ui->cbMonitorSelect->currentIndex()].grabAreas;
 	_zonePool.append(grabAreas.takeLast());
 	_zonePool.last()->hide();
+}
+
+bool ZonePlacementPage::reverseBottomRow() const
+{
+	return _cbReverseBottom && _cbReverseBottom->isChecked();
 }
 
 QRect ZonePlacementPage::screenRect() const
@@ -488,6 +525,7 @@ void ZonePlacementPage::onMonitor_currentIndexChanged(int idx)
 	_ui->doubleSpinBox_sideMargin->setValue(settings.sideMargin);
 	_ui->doubleSpinBox_bottomMargin->setValue(settings.bottomMargin);
 	_ui->cbInvertOrder->setChecked(settings.invertOrder);
+	_cbReverseBottom->setChecked(settings.reverseBottom);
 	_ui->checkBox_skipCorners->setChecked(settings.skipCorners);
 }
 
@@ -503,5 +541,6 @@ void ZonePlacementPage::saveMonitorSettings(MonitorSettings& settings)
 	settings.sideMargin = _ui->doubleSpinBox_sideMargin->value();
 	settings.bottomMargin = _ui->doubleSpinBox_bottomMargin->value();
 	settings.invertOrder = _ui->cbInvertOrder->isChecked();
+	settings.reverseBottom = _cbReverseBottom->isChecked();
 	settings.skipCorners = _ui->checkBox_skipCorners->isChecked();
 }

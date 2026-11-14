@@ -13,6 +13,21 @@ _/_/_/_/  _/    _/_/_/  _/    _/      _/_/  _/_/_/      _/_/_/    _/_/_/  _/    
 #    Software changelog
 ===================================================================================
 
+Version 5.11.4.0
+---------------
+(unreleased, fork williamandrade01wa-lab/Lightpack)
+
+* Engine: frame compositor between all color sources and the LED device
+  - frame rate capped to what the serial link can carry (Adalight/Ardulight),
+    newer frames replace pending ones, no accumulated latency
+  - software smoothing for Adalight/Ardulight/UDP (the Smoothness setting did
+    nothing on these devices before)
+  - screen is never grabbed faster than the LEDs can be updated
+* Wizard: "reverse bottom row (desk)" option, for strips that go around the
+  screen and then continue along the desk from left to right
+* Settings window: Basic/Expert modes, modern theme, plain-language help on
+  every option, Brazilian Portuguese translation
+
 Version 5.11.3.0
 ---------------
 (unreleased, fork williamandrade01wa-lab/Lightpack)
