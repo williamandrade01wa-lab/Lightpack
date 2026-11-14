@@ -55,6 +55,7 @@ Source: "content/Qt5Core.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "content/Qt5Gui.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "content/Qt5Network.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "content/Qt5SerialPort.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "content/Qt5WebSockets.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "content/Qt5Widgets.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "gpl-3.0.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "content/libraryinjector.dll"; DestDir: "{app}"; MinVersion: 6.1.7600; Flags: 32bit regserver ignoreversion
