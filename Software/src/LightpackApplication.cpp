@@ -42,7 +42,11 @@
 #endif
 
 #include "compositor/FrameCompositor.hpp"
+#ifdef WEBAPI_SUPPORT
 #include "web/HttpApiServer.hpp"
+#else
+class HttpApiServer : public QObject {}; // local web server not built (no QtWebSockets)
+#endif
 #include <QGuiApplication>
 #include <QScreen>
 #include <QJsonArray>
@@ -690,6 +694,7 @@ void LightpackApplication::startApiServer()
 void LightpackApplication::startWebApiServer()
 {
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO << "Start web API server";
+#ifdef WEBAPI_SUPPORT
 
 	m_webApiServer = new HttpApiServer(configDir());
 	m_webApiThread = new QThread();
@@ -717,6 +722,9 @@ void LightpackApplication::startWebApiServer()
 	pushScreensToWebApi();
 
 	m_webApiThread->start();
+#else
+	qWarning() << "Local web server not available: built without QtWebSockets";
+#endif
 }
 
 void LightpackApplication::pushScreensToWebApi()

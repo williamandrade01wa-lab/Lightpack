@@ -12,7 +12,6 @@ RUN pacman -Syu --noconfirm && pacman -S --noconfirm \
     namcap \
     qt5-base \
     qt5-serialport \
-    qt5-websockets \
     qt5-tools \
     && (yes | pacman -Scc) \
     && rm -rf /etc/localtime

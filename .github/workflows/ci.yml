@@ -251,7 +251,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.QT_DEST }}
-          key: ${{ runner.os }}-qt-${{ env.QT_VERSION }}
+          key: ${{ runner.os }}-qt-ws-${{ env.QT_VERSION }}
       - name: install Qt
         # The cache is relative to the workspace (not the default working dir)
         # so the QT installation should be too.

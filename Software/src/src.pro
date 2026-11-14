@@ -14,7 +14,15 @@ CONFIG(msvc) {
 }
 DESTDIR     = ../bin
 TEMPLATE    = app
-QT         += network widgets websockets
+QT         += network widgets
+
+# local web server needs QtWebSockets (optional: e.g. not packaged for Qt5 on Arch)
+qtHaveModule(websockets) {
+    QT += websockets
+    DEFINES += WEBAPI_SUPPORT
+    SOURCES += web/HttpApiServer.cpp
+    HEADERS += web/HttpApiServer.hpp
+}
 CONFIG += c++17
 win32 {
     QT += serialport
@@ -307,7 +315,6 @@ SOURCES += \
     BasicPanel.cpp \
     Explanations.cpp \
     compositor/FrameCompositor.cpp \
-    web/HttpApiServer.cpp \
     compositor/Effects.cpp \
     ApiServer.cpp \
     ApiServerSetColorTask.cpp \
@@ -366,7 +373,6 @@ HEADERS += \
     BasicPanel.hpp \
     Explanations.hpp \
     compositor/FrameCompositor.hpp \
-    web/HttpApiServer.hpp \
     compositor/Effects.hpp \
     ../common/defs.h \
     enums.hpp         ApiServer.hpp     ApiServerSetColorTask.hpp \
