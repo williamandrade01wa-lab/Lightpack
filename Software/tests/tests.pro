@@ -48,6 +48,8 @@ HEADERS += \
     ../src/enums.hpp \
     ../src/ApiServerSetColorTask.hpp \
     ../src/ApiServer.hpp \
+    ../src/compositor/FrameCompositor.hpp \
+    ../src/compositor/Effects.hpp \
     ../src/debug.h \
     ../src/Settings.hpp \
     ../src/Plugin.hpp \
@@ -66,6 +68,8 @@ HEADERS += \
 SOURCES += \
     ../src/ApiServerSetColorTask.cpp \
     ../src/ApiServer.cpp \
+    ../src/compositor/FrameCompositor.cpp \
+    ../src/compositor/Effects.cpp \
     ../src/Settings.cpp \
     ../src/Plugin.cpp \
     ../src/LightpackPluginInterface.cpp \
