@@ -62,6 +62,8 @@ public:
 public slots:
 	void onGrabberTypeChanged(const Grab::GrabberType grabberType);
 	void onGrabSlowdownChanged(int ms);
+	// floor for the grab interval (ms), e.g. the LED device's max frame interval; 0 = none
+	void setMinGrabInterval(int ms);
 	void onGrabPerformanceChanged();
 	void onGrabAvgColorsEnabledChanged(bool state);
 	void onGrabOverBrightenChanged(int value);
@@ -147,4 +149,6 @@ private:
 
 	bool m_isGrabWidgetsVisible;
 	GrabberContext * m_grabberContext;
+	int m_minGrabIntervalMs{ 0 };
+	int effectiveGrabInterval(int requestedMs) const;
 };

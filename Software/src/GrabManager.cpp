@@ -244,7 +244,7 @@ void GrabManager::onGrabberStateChangeRequested(bool isStartRequested) {
 			if (m_isGrabbingStarted && Settings::isDx1011GrabberEnabled()) {
 				m_grabber->stopGrabbing();
 				grabber->startGrabbing();
-				grabber->setGrabInterval(Settings::getGrabSlowdown());
+				grabber->setGrabInterval(effectiveGrabInterval(Settings::getGrabSlowdown()));
 			}
 		} else {
 			m_grabber->startGrabbing();
@@ -258,11 +258,25 @@ void GrabManager::onGrabberStateChangeRequested(bool isStartRequested) {
 #endif
 }
 
+int GrabManager::effectiveGrabInterval(int requestedMs) const
+{
+	// grabbing faster than the LEDs can be updated only burns CPU/GPU
+	return qMax(requestedMs, m_minGrabIntervalMs);
+}
+
+void GrabManager::setMinGrabInterval(int ms)
+{
+	m_minGrabIntervalMs = qMax(0, ms);
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << m_minGrabIntervalMs << "effective" << effectiveGrabInterval(Settings::getGrabSlowdown());
+	if (m_grabber)
+		m_grabber->setGrabInterval(effectiveGrabInterval(Settings::getGrabSlowdown()));
+}
+
 void GrabManager::onGrabSlowdownChanged(int ms)
 {
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO << ms;
 	if (m_grabber)
-		m_grabber->setGrabInterval(ms);
+		m_grabber->setGrabInterval(effectiveGrabInterval(ms));
 	else
 		qWarning() << Q_FUNC_INFO << "trying to change grab slowdown while there is no grabber";
 }
@@ -677,7 +691,7 @@ void GrabManager::initGrabbers()
 }
 
 GrabberBase *GrabManager::initGrabber(GrabberBase * grabber) {
-	QMetaObject::invokeMethod(grabber, "setGrabInterval", Qt::QueuedConnection, Q_ARG(int, Settings::getGrabSlowdown()));
+	QMetaObject::invokeMethod(grabber, "setGrabInterval", Qt::QueuedConnection, Q_ARG(int, effectiveGrabInterval(Settings::getGrabSlowdown())));
 	bool isConnected = connect(grabber, &GrabberBase::frameGrabAttempted, this, &GrabManager::onFrameGrabAttempted, Qt::QueuedConnection);
 	Q_ASSERT_X(isConnected, "connecting grabber to grabManager", "failed");
 	Q_UNUSED(isConnected);
@@ -716,7 +730,7 @@ GrabberBase *GrabManager::queryGrabber(Grab::GrabberType grabberType)
 		result = m_grabbers[Grab::GrabberTypeQt];
 	}
 
-	result->setGrabInterval(Settings::getGrabSlowdown());
+	result->setGrabInterval(effectiveGrabInterval(Settings::getGrabSlowdown()));
 
 	return result;
 }

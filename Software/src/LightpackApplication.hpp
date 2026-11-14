@@ -37,6 +37,7 @@
 class LightpackPluginInterface;
 class ApiServer;
 class PluginsManager;
+class FrameCompositor;
 
 class LightpackApplication : public QtSingleApplication
 {
@@ -84,6 +85,7 @@ private slots:
 	void onFocusChanged(QWidget *, QWidget *);
 	void quitFromWizard(int result);
 	void onSessionChange(SystemSession::Status change);
+	void updateFrameCompositor();
 
 private:
 	void processCommandLineArguments();
@@ -110,6 +112,7 @@ private:
 	SettingsWindow *m_settingsWindow{nullptr};
 	ApiServer *m_apiServer{nullptr};
 	LedDeviceManager *m_ledDeviceManager{nullptr};
+	FrameCompositor *m_frameCompositor{nullptr};
 	QThread *m_ledDeviceManagerThread{nullptr};
 	QThread *m_apiServerThread{nullptr};
 	GrabManager *m_grabManager{nullptr};

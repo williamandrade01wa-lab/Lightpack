@@ -41,6 +41,9 @@
 #include "WinUtils.hpp"
 #endif
 
+#include "compositor/FrameCompositor.hpp"
+#include "PrismatikMath.hpp"
+#include <cmath>
 #include <stdio.h>
 #include <iostream>
 
@@ -213,6 +216,7 @@ void LightpackApplication::initializeAll()
 	startApiServer();
 
 	initGrabManager();
+	updateFrameCompositor(); // grab manager exists now: apply the grab interval floor
 
 	if (!m_noGui && m_settingsWindow)
 	{
@@ -667,6 +671,11 @@ void LightpackApplication::startLedDeviceManager()
 	m_ledDeviceManager = new LedDeviceManager();
 	m_ledDeviceManagerThread = new QThread();
 
+	// Every color source goes through the compositor, which feeds the device
+	// (single writer, rate-capped to what the device link can carry, software smoothing)
+	m_frameCompositor = new FrameCompositor();
+	connect(m_frameCompositor, &FrameCompositor::frameReady, m_ledDeviceManager, &LedDeviceManager::setColors, Qt::DirectConnection);
+
 //	connect(settings(), &Settings::connectedDeviceChanged, this, &LightpackApplication::handleConnectedDeviceChange, Qt::DirectConnection);
 //	connect(settings(), &Settings::adalightSerialPortNameChanged,				m_ledDeviceManager, &LedDeviceManager::recreateLedDevice, Qt::DirectConnection);
 //	connect(settings(), &Settings::adalightSerialPortBaudRateChanged,			m_ledDeviceManager, &LedDeviceManager::recreateLedDevice, Qt::DirectConnection);
@@ -674,7 +683,7 @@ void LightpackApplication::startLedDeviceManager()
 	m_pluginInterface = new LightpackPluginInterface(NULL);
 
 	connect(m_pluginInterface, &LightpackPluginInterface::updateDeviceLockStatus, this, &LightpackApplication::setDeviceLockViaAPI);
-	connect(m_pluginInterface, &LightpackPluginInterface::updateLedsColors,	m_ledDeviceManager, &LedDeviceManager::setColors, Qt::QueuedConnection);
+	connect(m_pluginInterface, &LightpackPluginInterface::updateLedsColors,	m_frameCompositor, &FrameCompositor::setSourceFrame, Qt::QueuedConnection);
 	connect(m_pluginInterface, &LightpackPluginInterface::updateGamma,		m_ledDeviceManager, &LedDeviceManager::setGamma,		Qt::QueuedConnection);
 	connect(m_pluginInterface, &LightpackPluginInterface::updateBrightness,	m_ledDeviceManager, &LedDeviceManager::setBrightness,		Qt::QueuedConnection);
 	connect(m_pluginInterface, &LightpackPluginInterface::updateSmooth,		m_ledDeviceManager, &LedDeviceManager::setSmoothSlowdown, Qt::QueuedConnection);
@@ -723,12 +732,57 @@ void LightpackApplication::startLedDeviceManager()
 		connect(m_ledDeviceManager, &LedDeviceManager::firmwareVersionUnofficial, m_settingsWindow, &SettingsWindow::ledDeviceFirmwareVersionUnofficialResult,	Qt::QueuedConnection);
 		connect(m_ledDeviceManager, &LedDeviceManager::setColors_VirtualDeviceCallback, m_settingsWindow, &SettingsWindow::updateVirtualLedsColors, Qt::QueuedConnection);
 	}
+	// compositor settings follow the device, its link speed, LED count and the profile
+	connect(settings(), &Settings::connectedDeviceChanged, this, &LightpackApplication::updateFrameCompositor);
+	connect(settings(), &Settings::adalightSerialPortBaudRateChanged, this, &LightpackApplication::updateFrameCompositor);
+	connect(settings(), &Settings::ardulightSerialPortBaudRateChanged, this, &LightpackApplication::updateFrameCompositor);
+	connect(settings(), &Settings::adalightNumberOfLedsChanged, this, &LightpackApplication::updateFrameCompositor);
+	connect(settings(), &Settings::ardulightNumberOfLedsChanged, this, &LightpackApplication::updateFrameCompositor);
+	connect(settings(), &Settings::deviceSmoothChanged, this, &LightpackApplication::updateFrameCompositor);
+	connect(settings(), &Settings::currentProfileInited, this, &LightpackApplication::updateFrameCompositor);
+
 	m_ledDeviceManager->moveToThread(m_ledDeviceManagerThread);
+	m_frameCompositor->moveToThread(m_ledDeviceManagerThread); // same thread: frameReady -> setColors is a direct call
 	m_ledDeviceManagerThread->start();
 	QMetaObject::invokeMethod(m_ledDeviceManager, "init", Qt::QueuedConnection);
+	updateFrameCompositor();
 
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO << "end";
 
+}
+
+void LightpackApplication::updateFrameCompositor()
+{
+	if (!m_frameCompositor)
+		return;
+
+	const SupportedDevices::DeviceType device = Settings::getConnectedDevice();
+
+	// Serial devices: cap the frame rate at what the baud rate can carry
+	// (e.g. 159 LEDs at 115200 baud = ~23.8 FPS). Faster frames would only be dropped.
+	double maxFps = 0.0;
+	if (device == SupportedDevices::DeviceTypeAdalight || device == SupportedDevices::DeviceTypeArdulight) {
+		const double leds = Settings::getNumberOfLeds(device);
+		const double baud = device == SupportedDevices::DeviceTypeAdalight
+			? Settings::getAdalightSerialPortBaudRate() : Settings::getArdulightSerialPortBaudRate();
+		if (leds > 0 && baud > 0)
+			maxFps = PrismatikMath::theoreticalMaxFrameRate(leds, baud);
+	}
+
+	// Lightpack hardware smooths on the device itself; everything else gets software smoothing
+	const bool softwareSmoothing = device != SupportedDevices::DeviceTypeLightpack;
+	const int smoothness = Settings::getDeviceSmooth();
+
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << "device" << device << "max fps" << maxFps
+		<< "software smoothing" << softwareSmoothing << smoothness;
+
+	QMetaObject::invokeMethod(m_frameCompositor, "setMaxFps", Qt::QueuedConnection, Q_ARG(double, maxFps));
+	QMetaObject::invokeMethod(m_frameCompositor, "setSoftwareSmoothingEnabled", Qt::QueuedConnection, Q_ARG(bool, softwareSmoothing));
+	QMetaObject::invokeMethod(m_frameCompositor, "setSmoothness", Qt::QueuedConnection, Q_ARG(int, smoothness));
+
+	// no point grabbing the screen faster than the LEDs can be updated
+	if (m_grabManager)
+		m_grabManager->setMinGrabInterval(maxFps > 0.0 ? static_cast<int>(std::ceil(1000.0 / maxFps)) : 0);
 }
 
 void LightpackApplication::startPluginManager()
@@ -839,8 +893,8 @@ void LightpackApplication::initGrabManager()
 
 	connect(m_grabManager, &GrabManager::ambilightTimeOfUpdatingColors, m_pluginInterface, &LightpackPluginInterface::refreshAmbilightEvaluated);
 
-	connect(m_grabManager, &GrabManager::updateLedsColors,	m_ledDeviceManager, &LedDeviceManager::setColors, Qt::QueuedConnection);
-	connect(m_moodlampManager, &MoodLampManager::updateLedsColors,	m_ledDeviceManager, &LedDeviceManager::setColors, Qt::QueuedConnection);
+	connect(m_grabManager, &GrabManager::updateLedsColors,	m_frameCompositor, &FrameCompositor::setSourceFrame, Qt::QueuedConnection);
+	connect(m_moodlampManager, &MoodLampManager::updateLedsColors,	m_frameCompositor, &FrameCompositor::setSourceFrame, Qt::QueuedConnection);
 	if (!m_noGui && m_settingsWindow) {
 		connect(m_moodlampManager, &MoodLampManager::moodlampFrametime,		m_settingsWindow, &SettingsWindow::refreshAmbilightEvaluated, Qt::QueuedConnection);
 		// live LED preview in the Basic view (the slot ignores frames while it's hidden)
@@ -851,7 +905,7 @@ void LightpackApplication::initGrabManager()
 	connect(m_ledDeviceManager, &LedDeviceManager::ioDeviceSuccess,					m_grabManager, &GrabManager::ledDeviceCallSuccess, Qt::QueuedConnection);
 #ifdef SOUNDVIZ_SUPPORT
 	if (m_soundManager) {
-		connect(m_soundManager, &SoundManagerBase::updateLedsColors,	m_ledDeviceManager, &LedDeviceManager::setColors, Qt::QueuedConnection);
+		connect(m_soundManager, &SoundManagerBase::updateLedsColors,	m_frameCompositor, &FrameCompositor::setSourceFrame, Qt::QueuedConnection);
 		if (!m_noGui && m_settingsWindow) {
 			connect(m_soundManager, &SoundManagerBase::visualizerFrametime,	m_settingsWindow, &SettingsWindow::refreshAmbilightEvaluated, Qt::QueuedConnection);
 			connect(m_soundManager, &SoundManagerBase::updateLedsColors,	m_settingsWindow, &SettingsWindow::updateBasicPreview, Qt::QueuedConnection);
