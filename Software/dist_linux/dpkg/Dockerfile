@@ -11,6 +11,7 @@ RUN apt update && apt dist-upgrade -y && apt install -y \
     libfftw3-dev \
     libpulse-dev \
     libqt5serialport5-dev \
+    libqt5websockets5-dev \
     libudev-dev \
     libusb-1.0-0-dev \
     lsb-release \

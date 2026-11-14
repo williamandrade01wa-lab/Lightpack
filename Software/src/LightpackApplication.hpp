@@ -38,6 +38,7 @@ class LightpackPluginInterface;
 class ApiServer;
 class PluginsManager;
 class FrameCompositor;
+class HttpApiServer;
 
 class LightpackApplication : public QtSingleApplication
 {
@@ -86,6 +87,11 @@ private slots:
 	void quitFromWizard(int result);
 	void onSessionChange(SystemSession::Status change);
 	void updateFrameCompositor();
+	// requests coming from the local web server (GUI thread)
+	void webSetProfile(const QString &name);
+	void webSetStatus(int status);
+	void webSetBrightness(int value);
+	void webSetGroups(const QString &profile, const QString &json);
 
 private:
 	void processCommandLineArguments();
@@ -93,6 +99,8 @@ private:
 	void printVersionsSoftwareQtOS() const;
 	bool checkSystemTrayAvailability() const;
 	void startApiServer();
+	void startWebApiServer();
+	void pushScreensToWebApi();
 	void startLedDeviceManager();
 	void initGrabManager();
 	void startPluginManager();
@@ -115,6 +123,8 @@ private:
 	FrameCompositor *m_frameCompositor{nullptr};
 	QThread *m_ledDeviceManagerThread{nullptr};
 	QThread *m_apiServerThread{nullptr};
+	HttpApiServer *m_webApiServer{nullptr};
+	QThread *m_webApiThread{nullptr};
 	GrabManager *m_grabManager{nullptr};
 	MoodLampManager *m_moodlampManager{nullptr};
 #ifdef SOUNDVIZ_SUPPORT

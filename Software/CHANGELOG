@@ -13,6 +13,16 @@ _/_/_/_/  _/    _/_/_/  _/    _/      _/_/  _/_/_/      _/_/_/    _/_/_/  _/    
 #    Software changelog
 ===================================================================================
 
+Version 5.11.5.0
+---------------
+(unreleased, fork williamandrade01wa-lab/Lightpack)
+
+* Local web server (HTTP + WebSocket, 127.0.0.1:3637): REST API /api/v1
+  (state, profiles, layout, LED groups, triggers, overlays), live preview of the
+  LED frames on /ws, static panel files. Secret token (main.conf, [WebApi]),
+  Host/Origin checks, size and rate limits. Option in Expert mode.
+* Triggers: on_conflict (restart/ignore/stack), overlay events
+
 Version 5.11.4.0
 ---------------
 (unreleased, fork williamandrade01wa-lab/Lightpack)

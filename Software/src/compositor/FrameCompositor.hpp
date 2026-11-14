@@ -55,7 +55,8 @@ public:
 	static double smoothingTimeConstantMs(int smoothness);
 
 	// Validates a trigger/overlay JSON without applying it (usable from any thread).
-	static bool validateOverlayJson(const QString &json, QString *error);
+	// `durationMs` (optional) receives the overlay length (0 = until removed).
+	static bool validateOverlayJson(const QString &json, QString *error, int *durationMs = nullptr);
 
 public slots:
 	// latest full frame from the active color source
@@ -80,6 +81,8 @@ public slots:
 
 signals:
 	void frameReady(const QList<QRgb> &colors);
+	// active overlays as a JSON array, sent whenever one starts or ends (web API)
+	void overlaysChanged(const QString &json);
 
 private slots:
 	void emitFrame();
@@ -106,10 +109,14 @@ private:
 		int fadeInMs{ 0 };
 		int fadeOutMs{ 0 };
 		qint64 removeAtMs{ -1 };   // set when removed explicitly (fade out from there)
+		QString effectName;
+		qint64 startedEpochMs{ 0 };
+		bool removing{ false };    // past its end, fading out (reported by overlaysChanged)
 		QVector<int> resolved;     // LED indices, built for the current LED count
 	};
 
 	void scheduleEmit();
+	void publishOverlays();
 	bool smoothingActive() const;
 	bool needsClock() const;
 	void rebuildLayout();                       // per-LED group map for the current LED count

@@ -21,6 +21,7 @@
 #include "FrameCompositor.hpp"
 #include "debug.h"
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -91,7 +92,7 @@ double FrameCompositor::smoothingTimeConstantMs(int smoothness)
 	return smoothness <= 0 ? 0.0 : smoothness * 1.5;
 }
 
-bool FrameCompositor::validateOverlayJson(const QString &json, QString *error)
+bool FrameCompositor::validateOverlayJson(const QString &json, QString *error, int *durationMs)
 {
 	QJsonParseError parseError;
 	const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parseError);
@@ -101,7 +102,34 @@ bool FrameCompositor::validateOverlayJson(const QString &json, QString *error)
 	}
 	QString id, blend; LedSet target; QStringList groups; Pattern effect;
 	float opacity; int priority, duration, fadeIn, fadeOut;
-	return parseOverlayObject(doc.object(), error, &id, &target, &groups, &effect, &blend, &opacity, &priority, &duration, &fadeIn, &fadeOut);
+	if (!parseOverlayObject(doc.object(), error, &id, &target, &groups, &effect, &blend, &opacity, &priority, &duration, &fadeIn, &fadeOut))
+		return false;
+	const QString conflict = doc.object().value(QLatin1String("on_conflict")).toString(QStringLiteral("restart"));
+	if (conflict != QLatin1String("restart") && conflict != QLatin1String("ignore") && conflict != QLatin1String("stack")) {
+		*error = QStringLiteral("on_conflict must be restart, ignore or stack");
+		return false;
+	}
+	if (durationMs)
+		*durationMs = duration;
+	return true;
+}
+
+void FrameCompositor::publishOverlays()
+{
+	const qint64 now = m_clock.elapsed();
+	const qint64 epochNow = QDateTime::currentMSecsSinceEpoch();
+	QJsonArray arr;
+	for (const Overlay &o : m_overlays) {
+		QJsonObject j;
+		j.insert(QStringLiteral("id"), o.id);
+		j.insert(QStringLiteral("priority"), o.priority);
+		j.insert(QStringLiteral("effect"), o.effectName);
+		j.insert(QStringLiteral("started_at_ms"), double(o.startedEpochMs ? o.startedEpochMs : epochNow - (now - o.startMs)));
+		j.insert(QStringLiteral("duration_ms"), o.durationMs);
+		j.insert(QStringLiteral("removing"), o.removing || o.removeAtMs >= 0);
+		arr.append(j);
+	}
+	emit overlaysChanged(QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
 }
 
 // ---------------------------------------------------------------------------
@@ -237,13 +265,22 @@ void FrameCompositor::triggerOverlay(const QString &json)
 	}
 	o.blend = blend == QLatin1String("override") ? Blend::Override : blend == QLatin1String("add") ? Blend::Add : Blend::Alpha;
 	o.startMs = m_clock.elapsed();
+	o.startedEpochMs = QDateTime::currentMSecsSinceEpoch();
+	o.effectName = doc.object().value(QLatin1String("effect")).toObject().value(QLatin1String("type")).toString().toLower();
 	resolveOverlay(o);
 
-	// same id = restart (e.g. a second WhatsApp message restarts the pulse instead of stacking)
-	if (!o.id.isEmpty())
+	// same id = restart (e.g. a second WhatsApp message restarts the pulse instead of stacking);
+	// on_conflict "ignore" keeps the running one, "stack" keeps both
+	const QString conflict = doc.object().value(QLatin1String("on_conflict")).toString(QStringLiteral("restart"));
+	if (!o.id.isEmpty() && conflict != QLatin1String("stack")) {
+		if (conflict == QLatin1String("ignore"))
+			for (const Overlay &x : m_overlays)
+				if (x.id == o.id && x.removeAtMs < 0)
+					return;
 		for (int i = m_overlays.size() - 1; i >= 0; --i)
 			if (m_overlays[i].id == o.id)
 				m_overlays.removeAt(i);
+	}
 	if (m_overlays.size() >= MaxOverlays)
 		m_overlays.removeFirst();
 
@@ -251,6 +288,7 @@ void FrameCompositor::triggerOverlay(const QString &json)
 		[](int p, const Overlay &x) { return p < x.priority; });
 	m_overlays.insert(pos, o);
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO << "overlay" << o.id << "leds" << o.resolved.size() << "duration" << o.durationMs;
+	publishOverlays();
 	scheduleEmit();
 }
 
@@ -260,6 +298,7 @@ void FrameCompositor::removeOverlay(const QString &id)
 	for (Overlay &o : m_overlays)
 		if ((id == QLatin1String("*") || o.id == id) && o.removeAtMs < 0)
 			o.removeAtMs = now;
+	publishOverlays();
 	scheduleEmit();
 }
 
@@ -359,11 +398,13 @@ void FrameCompositor::emitFrame()
 
 	// 3. OVERLAYS (not smoothed, so pulses stay crisp)
 	QVector<float> frame = m_current;
+	bool overlaysDirty = false;
 	for (int idx = 0; idx < m_overlays.size(); ++idx) {
 		Overlay &o = m_overlays[idx];
 		const float env = envelope(o, now);
 		if (env < 0.0f) {
 			m_overlays.removeAt(idx--);
+			overlaysDirty = true;
 			continue;
 		}
 		const int n = o.resolved.size();
@@ -392,6 +433,8 @@ void FrameCompositor::emitFrame()
 						qBound(0, int(frame[i * 3 + 1] + 0.5f), 255),
 						qBound(0, int(frame[i * 3 + 2] + 0.5f), 255)));
 	emit frameReady(out);
+	if (overlaysDirty)
+		publishOverlays();
 
 	// keep the clock running while something moves on its own
 	if (!converged || needsClock())

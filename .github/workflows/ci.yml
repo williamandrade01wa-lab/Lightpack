@@ -146,7 +146,7 @@ jobs:
           # pin an LTS line; '6.*' drifts to releases aqt mirrors may not have yet
           version: '6.8.*'
           arch: win64_msvc2022_64
-          modules: qtserialport
+          modules: qtserialport qtwebsockets
       - name: Cached Bass
         id: cache-bass
         uses: actions/cache@v4
@@ -265,7 +265,7 @@ jobs:
             echo using cached version
           else
             echo installing fresh version
-            aqt install-qt mac desktop $QT_VERSION clang_64 --modules qtserialport --outputdir $QT_DEST
+            aqt install-qt mac desktop $QT_VERSION clang_64 --modules qtserialport qtwebsockets --outputdir $QT_DEST
           fi
           # Qt's qmake specs still link the AGL framework, which recent macOS SDKs
           # no longer ship ("ld: framework 'AGL' not found"); drop it

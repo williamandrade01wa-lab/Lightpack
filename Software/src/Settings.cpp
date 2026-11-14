@@ -94,6 +94,15 @@ static const QString ListenOnlyOnLoInterface = QStringLiteral("API/ListenOnlyOnL
 static const QString Port = QStringLiteral("API/Port");
 static const QString AuthKey = QStringLiteral("API/AuthKey");
 }
+// [WebApi] local HTTP + WebSocket server (panel, live preview, triggers)
+namespace WebApi
+{
+static const QString IsEnabled = QStringLiteral("WebApi/IsEnabled");
+static const QString Port = QStringLiteral("WebApi/Port");
+static const QString Token = QStringLiteral("WebApi/Token");
+static const QString AllowedOrigins = QStringLiteral("WebApi/AllowedOrigins");
+static const QString AllowLan = QStringLiteral("WebApi/AllowLan");
+}
 namespace Adalight
 {
 static const QString NumberOfLeds = QStringLiteral("Adalight/NumberOfLeds");
@@ -338,6 +347,13 @@ bool Settings::Initialize( const QString & applicationDirPath, bool isDebugLevel
 	setNewOptionMain(Main::Key::Api::Port,				Main::Api::PortDefault);
 	// Generation AuthKey as new UUID
 	setNewOptionMain(Main::Key::Api::AuthKey,			Main::Api::AuthKey);
+	// Local web server: on by default, loopback only, random token generated once
+	setNewOptionMain(Main::Key::WebApi::IsEnabled,		true);
+	setNewOptionMain(Main::Key::WebApi::Port,			3637);
+	setNewOptionMain(Main::Key::WebApi::AllowedOrigins,	QString());
+	setNewOptionMain(Main::Key::WebApi::AllowLan,		false);
+	if (valueMain(Main::Key::WebApi::Token).toString().isEmpty())
+		setValueMain(Main::Key::WebApi::Token, QUuid::createUuid().toString().remove(QLatin1Char('{')).remove(QLatin1Char('}')).remove(QLatin1Char('-')));
 
 	// Serial device configuration
 	setNewOptionMain(Main::Key::Adalight::Port,				Main::Adalight::PortDefault);
@@ -712,6 +728,67 @@ void Settings::setApiKey(const QString & apiKey)
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
 	setValueMain(Main::Key::Api::AuthKey, apiKey);
 	emit m_this->apiKeyChanged(apiKey);
+}
+
+bool Settings::isWebApiEnabled()
+{
+	return valueMain(Main::Key::WebApi::IsEnabled).toBool();
+}
+
+void Settings::setWebApiEnabled(bool isEnabled)
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << isEnabled;
+	setValueMain(Main::Key::WebApi::IsEnabled, isEnabled);
+	emit m_this->webApiSettingsChanged();
+}
+
+int Settings::getWebApiPort()
+{
+	const int port = valueMain(Main::Key::WebApi::Port).toInt();
+	return port > 0 && port < 65536 ? port : 3637;
+}
+
+QString Settings::getWebApiToken()
+{
+	return valueMain(Main::Key::WebApi::Token).toString();
+}
+
+QStringList Settings::getWebApiAllowedOrigins()
+{
+	QStringList origins;
+	for (const QString &origin : valueMain(Main::Key::WebApi::AllowedOrigins).toString().split(QLatin1Char(',')))
+		if (!origin.trimmed().isEmpty())
+			origins << origin.trimmed();
+	return origins;
+}
+
+bool Settings::isWebApiLanAllowed()
+{
+	return valueMain(Main::Key::WebApi::AllowLan).toBool();
+}
+
+QString Settings::getProfileCompositorGroupsJson(const QString &profileName)
+{
+	if (profileName == getCurrentProfileName())
+		return getCompositorGroupsJson();
+	QSettings profile(getProfilesPath() + profileName + QStringLiteral(".ini"), QSettings::IniFormat);
+	#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
+	profile.setIniCodec("UTF-8");
+	#endif
+	return profile.value(Profile::Key::Grab::CompositorGroups).toString();
+}
+
+void Settings::setProfileCompositorGroupsJson(const QString &profileName, const QString &json)
+{
+	if (profileName == getCurrentProfileName()) {
+		setCompositorGroupsJson(json);
+		return;
+	}
+	QSettings profile(getProfilesPath() + profileName + QStringLiteral(".ini"), QSettings::IniFormat);
+	#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
+	profile.setIniCodec("UTF-8");
+	#endif
+	profile.setValue(Profile::Key::Grab::CompositorGroups, json);
 }
 
 bool Settings::isExpertMode()

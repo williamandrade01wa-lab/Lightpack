@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file>icons/error.png</file>
+        <file alias="www/test.html">www/test.html</file>
         <file>icons/off.png</file>
         <file>icons/on.png</file>
         <file>icons/settings.png</file>

@@ -82,6 +82,8 @@ namespace
 	{ { "pushButton_ReloadPlugins" }, QT_TRANSLATE_NOOP("Explanations", "Look for new or changed plugins in the Plugins folder.") },
 	{ { "groupBox_Api" }, QT_TRANSLATE_NOOP("Explanations", "Lets other programs (Home Assistant, scripts, plugins) control the LEDs over the network. Leave it off unless you need it.") },
 	{ { "checkBox_listenOnlyOnLoInterface" }, QT_TRANSLATE_NOOP("Explanations", "Accept connections only from this computer. Turn off only if another device on your network has to control the LEDs.") },
+	{ { "checkBox_EnableWebApi" }, QT_TRANSLATE_NOOP("Explanations", "Local web server (127.0.0.1:3637) for the web panel, the live preview and triggers from extensions. Only this computer can reach it and every request needs a secret token.") },
+	{ { "pushButton_OpenWebPanel" }, QT_TRANSLATE_NOOP("Explanations", "Opens the web panel in your browser.") },
 	{ { "lineEdit_ApiPort" }, QT_TRANSLATE_NOOP("Explanations", "Network port of the API server. Default: 3636.") },
 	{ { "lineEdit_ApiKey", "pushButton_GenerateNewApiKey" }, QT_TRANSLATE_NOOP("Explanations", "Password other programs must send to use the API. Empty = no password.") },
 	{ { "groupBox" }, QT_TRANSLATE_NOOP("Explanations", "How Prismatik reads your screen.") },

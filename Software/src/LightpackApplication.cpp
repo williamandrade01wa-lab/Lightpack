@@ -42,6 +42,12 @@
 #endif
 
 #include "compositor/FrameCompositor.hpp"
+#include "web/HttpApiServer.hpp"
+#include <QGuiApplication>
+#include <QScreen>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "PrismatikMath.hpp"
 #include <cmath>
 #include <stdio.h>
@@ -68,10 +74,20 @@ LightpackApplication::~LightpackApplication()
 
 	m_EventFilters.clear();
 
+	if (m_webApiServer)
+		QMetaObject::invokeMethod(m_webApiServer, "stop", Qt::BlockingQueuedConnection);
 	m_ledDeviceManagerThread->quit();
 	m_apiServerThread->quit();
+	if (m_webApiThread)
+		m_webApiThread->quit();
 	m_ledDeviceManagerThread->wait();
 	m_apiServerThread->wait();
+	if (m_webApiThread)
+		m_webApiThread->wait();
+	delete m_webApiServer;
+	m_webApiServer = NULL;
+	delete m_webApiThread;
+	m_webApiThread = NULL;
 
 	delete m_settingsWindow;
 	m_settingsWindow = NULL;
@@ -214,6 +230,7 @@ void LightpackApplication::initializeAll()
 	startLedDeviceManager();
 
 	startApiServer();
+	startWebApiServer();
 
 	initGrabManager();
 	updateFrameCompositor(); // grab manager exists now: apply the grab interval floor
@@ -310,6 +327,8 @@ void LightpackApplication::startBacklight()
 	bool isCanStart = (isBacklightEnabled && m_deviceLockStatus == DeviceLocked::Unlocked);
 
 	m_pluginInterface->resultBacklightStatus(m_backlightStatus);
+	if (m_webApiServer)
+		QMetaObject::invokeMethod(m_webApiServer, "onStatusChanged", Qt::QueuedConnection, Q_ARG(int, int(m_backlightStatus)));
 
 	Settings::setIsBacklightEnabled(isBacklightEnabled);
 
@@ -668,6 +687,86 @@ void LightpackApplication::startApiServer()
 	m_apiServerThread->start();
 }
 
+void LightpackApplication::startWebApiServer()
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << "Start web API server";
+
+	m_webApiServer = new HttpApiServer(configDir());
+	m_webApiThread = new QThread();
+	m_webApiServer->moveToThread(m_webApiThread);
+
+	connect(m_webApiThread, &QThread::started, m_webApiServer, &HttpApiServer::start);
+	connect(settings(), &Settings::webApiSettingsChanged, m_webApiServer, &HttpApiServer::start, Qt::QueuedConnection);
+
+	// requests from clients -> GUI thread
+	connect(m_webApiServer, &HttpApiServer::profileRequested, this, &LightpackApplication::webSetProfile, Qt::QueuedConnection);
+	connect(m_webApiServer, &HttpApiServer::statusRequested, this, &LightpackApplication::webSetStatus, Qt::QueuedConnection);
+	connect(m_webApiServer, &HttpApiServer::brightnessRequested, this, &LightpackApplication::webSetBrightness, Qt::QueuedConnection);
+	connect(m_webApiServer, &HttpApiServer::groupsWriteRequested, this, &LightpackApplication::webSetGroups, Qt::QueuedConnection);
+
+	// triggers -> compositor
+	connect(m_webApiServer, &HttpApiServer::triggerRequested, m_frameCompositor, &FrameCompositor::triggerOverlay, Qt::QueuedConnection);
+	connect(m_webApiServer, &HttpApiServer::removeRequested, m_frameCompositor, &FrameCompositor::removeOverlay, Qt::QueuedConnection);
+
+	// live data -> server
+	connect(m_frameCompositor, &FrameCompositor::frameReady, m_webApiServer, &HttpApiServer::onFrame, Qt::QueuedConnection);
+	connect(m_frameCompositor, &FrameCompositor::overlaysChanged, m_webApiServer, &HttpApiServer::onOverlaysChanged, Qt::QueuedConnection);
+	connect(settings(), &Settings::currentProfileInited, m_webApiServer, &HttpApiServer::onProfileChanged, Qt::QueuedConnection);
+	connect(qApp, &QGuiApplication::screenAdded, this, [this]() { pushScreensToWebApi(); });
+	connect(qApp, &QGuiApplication::screenRemoved, this, [this]() { pushScreensToWebApi(); });
+	pushScreensToWebApi();
+
+	m_webApiThread->start();
+}
+
+void LightpackApplication::pushScreensToWebApi()
+{
+	if (!m_webApiServer)
+		return;
+	QJsonArray arr;
+	int index = 0;
+	for (QScreen *screen : QGuiApplication::screens()) {
+		const QRect g = screen->geometry();
+		QJsonObject o;
+		o.insert(QStringLiteral("index"), index++);
+		o.insert(QStringLiteral("x"), g.x());
+		o.insert(QStringLiteral("y"), g.y());
+		o.insert(QStringLiteral("w"), g.width());
+		o.insert(QStringLiteral("h"), g.height());
+		o.insert(QStringLiteral("primary"), screen == QGuiApplication::primaryScreen());
+		arr.append(o);
+	}
+	QMetaObject::invokeMethod(m_webApiServer, "setScreensJson", Qt::QueuedConnection,
+		Q_ARG(QString, QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact))));
+}
+
+void LightpackApplication::webSetProfile(const QString &name)
+{
+	if (!m_noGui && m_settingsWindow)
+		m_settingsWindow->profileSwitch(name);
+	else
+		profileSwitch(name);
+}
+
+void LightpackApplication::webSetStatus(int status)
+{
+	const Backlight::Status s = status == Backlight::StatusOn ? Backlight::StatusOn : Backlight::StatusOff;
+	if (!m_noGui && m_settingsWindow)
+		m_settingsWindow->setBacklightStatus(s);
+	else
+		setStatusChanged(s);
+}
+
+void LightpackApplication::webSetBrightness(int value)
+{
+	Settings::setDeviceBrightness(qBound(0, value, 100));
+}
+
+void LightpackApplication::webSetGroups(const QString &profile, const QString &json)
+{
+	Settings::setProfileCompositorGroupsJson(profile, json);
+}
+
 void LightpackApplication::startLedDeviceManager()
 {
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
@@ -781,6 +880,8 @@ void LightpackApplication::updateFrameCompositor()
 		<< "software smoothing" << softwareSmoothing << smoothness;
 
 	QMetaObject::invokeMethod(m_frameCompositor, "setMaxFps", Qt::QueuedConnection, Q_ARG(double, maxFps));
+	if (m_webApiServer)
+		QMetaObject::invokeMethod(m_webApiServer, "setSerialMaxFps", Qt::QueuedConnection, Q_ARG(double, maxFps));
 	QMetaObject::invokeMethod(m_frameCompositor, "setSoftwareSmoothingEnabled", Qt::QueuedConnection, Q_ARG(bool, softwareSmoothing));
 	QMetaObject::invokeMethod(m_frameCompositor, "setSmoothness", Qt::QueuedConnection, Q_ARG(int, smoothness));
 	QMetaObject::invokeMethod(m_frameCompositor, "setGroupsJson", Qt::QueuedConnection, Q_ARG(QString, Settings::getCompositorGroupsJson()));

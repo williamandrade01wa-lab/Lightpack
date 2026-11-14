@@ -188,6 +188,14 @@
         <translation>Aceita conexões só deste computador. Desligue apenas se outro aparelho da sua rede precisar controlar os LEDs.</translation>
     </message>
     <message>
+        <source>Local web server (127.0.0.1:3637) for the web panel, the live preview and triggers from extensions. Only this computer can reach it and every request needs a secret token.</source>
+        <translation>Servidor web local (127.0.0.1:3637) para o painel, a prévia ao vivo e os gatilhos de extensões. Só este computador alcança e todo pedido exige um token secreto.</translation>
+    </message>
+    <message>
+        <source>Opens the web panel in your browser.</source>
+        <translation>Abre o painel web no seu navegador.</translation>
+    </message>
+    <message>
         <source>Network port of the API server. Default: 3636.</source>
         <translation>Porta de rede do servidor da API. Padrão: 3636.</translation>
     </message>
@@ -476,6 +484,14 @@ Se uma janela em tela cheia estiver em foco num monitor capturado e nenhuma imag
     <message>
         <source>Enable server (API via sockets)</source>
         <translation>Ativar servidor (API pela rede)</translation>
+    </message>
+    <message>
+        <source>Enable local web server (panel and triggers)</source>
+        <translation>Ativar servidor web local (painel e gatilhos)</translation>
+    </message>
+    <message>
+        <source>Open web panel</source>
+        <translation>Abrir painel web</translation>
     </message>
     <message>
         <source>Eye care settings</source>

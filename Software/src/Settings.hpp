@@ -103,6 +103,16 @@ public:
 	static QString getApiAuthKey();
 	static void setApiKey(const QString & apiKey);
 	static void setIsApiAuthEnabled(bool isEnabled);
+	// local web server (HTTP + WebSocket, 127.0.0.1:3637)
+	static bool isWebApiEnabled();
+	static void setWebApiEnabled(bool isEnabled);
+	static int getWebApiPort();
+	static QString getWebApiToken();
+	static QStringList getWebApiAllowedOrigins();
+	static bool isWebApiLanAllowed();
+	// compositor groups of any profile (the current one goes through the normal setter)
+	static QString getProfileCompositorGroupsJson(const QString &profileName);
+	static void setProfileCompositorGroupsJson(const QString &profileName, const QString &json);
 	static bool isExpertMode();
 	static void setExpertMode(bool isExpert);
 	static bool isKeepLightsOnAfterExit();
@@ -362,6 +372,7 @@ signals:
 	void grabSlowdownChanged(int value);
 	void grabPerformanceChanged();
 	void compositorGroupsChanged();
+	void webApiSettingsChanged();
 	void backlightEnabledChanged(bool isEnabled);
 	void grabAvgColorsEnabledChanged(bool isEnabled);
 	void grabOverBrightenChanged(int value);

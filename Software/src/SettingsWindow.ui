@@ -2708,6 +2708,20 @@ Internally emulates the effects of f.lux, redshift, Night Light, Night Shift...<
          </widget>
         </item>
         <item>
+         <widget class="QCheckBox" name="checkBox_EnableWebApi">
+          <property name="text">
+           <string>Enable local web server (panel and triggers)</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="pushButton_OpenWebPanel">
+          <property name="text">
+           <string>Open web panel</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="QGroupBox" name="groupBox">
           <property name="sizePolicy">
            <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">

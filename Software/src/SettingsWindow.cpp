@@ -57,6 +57,8 @@
 #include "Theme.hpp"
 #include "BasicPanel.hpp"
 #include "Explanations.hpp"
+#include <QDesktopServices>
+#include <QUrl>
 
 using namespace SettingsScope;
 
@@ -353,6 +355,13 @@ void SettingsWindow::connectSignalsSlots()
 
 	// Dev tab configure API (port, apikey)
 	connect(ui->groupBox_Api, &QGroupBox::toggled, this, &SettingsWindow::onEnableApi_Toggled);
+	connect(ui->checkBox_EnableWebApi, &QCheckBox::toggled, this, [](bool on) {
+		if (on != Settings::isWebApiEnabled())
+			Settings::setWebApiEnabled(on);
+	});
+	connect(ui->pushButton_OpenWebPanel, &QPushButton::clicked, this, []() {
+		QDesktopServices::openUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(Settings::getWebApiPort())));
+	});
 	connect(ui->checkBox_listenOnlyOnLoInterface, &QCheckBox::toggled, this, &SettingsWindow::onListenOnlyOnLoInterface_Toggled);
 	connect(ui->lineEdit_ApiPort, &QLineEdit::editingFinished, this, &SettingsWindow::onSetApiPort_Clicked);
 	//connect(ui->checkBox_IsApiAuthEnabled, &QCheckBox::toggled, this, &SettingsWindow::onIsApiAuthEnabled_Toggled);
@@ -2271,6 +2280,7 @@ void SettingsWindow::updateUiFromSettings()
 	ui->checkBox_EnableDithering->setChecked						(Settings::isDeviceDitheringEnabled());
 
 	ui->groupBox_Api->setChecked									(Settings::isApiEnabled());
+	ui->checkBox_EnableWebApi->setChecked							(Settings::isWebApiEnabled());
 	ui->checkBox_listenOnlyOnLoInterface->setChecked				(Settings::isListenOnlyOnLoInterface());
 	ui->lineEdit_ApiPort->setText									(QString::number(Settings::getApiPort()));
 	ui->lineEdit_ApiPort->setValidator								(new QIntValidator(1, 49151));
