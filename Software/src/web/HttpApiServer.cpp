@@ -48,6 +48,11 @@ namespace
 	const int WsMaxMessageBytes = 64 * 1024;
 	const qint64 WsBackpressureBytes = 1024 * 1024;
 
+	void addHeader(QList<QPair<QByteArray, QByteArray>> &list, const QByteArray &key, const QByteArray &value)
+	{
+		list.append(qMakePair(key, value));
+	}
+
 	QByteArray statusText(int status)
 	{
 		switch (status) {
@@ -366,8 +371,8 @@ void HttpApiServer::sendResponse(QTcpSocket *socket, Response response, const Re
 		return; // already answered
 	const QByteArray origin = request.headers.value("origin");
 	if (!origin.isEmpty() && originAllowed(QString::fromLatin1(origin))) {
-		response.headers.append({ "Access-Control-Allow-Origin", origin });
-		response.headers.append({ "Vary", "Origin" });
+		addHeader(response.headers, "Access-Control-Allow-Origin", origin);
+		addHeader(response.headers, "Vary", "Origin");
 	}
 	QByteArray out = "HTTP/1.1 " + QByteArray::number(response.status) + " " + statusText(response.status) + "\r\n";
 	out += "Content-Type: " + response.contentType + "\r\n";
@@ -463,9 +468,9 @@ HttpApiServer::Response HttpApiServer::route(const Request &request)
 	if (request.method == "OPTIONS") {
 		Response r;
 		r.status = 204;
-		r.headers.append({ "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS" });
-		r.headers.append({ "Access-Control-Allow-Headers", "Authorization, Content-Type" });
-		r.headers.append({ "Access-Control-Max-Age", "600" });
+		addHeader(r.headers, "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+		addHeader(r.headers, "Access-Control-Allow-Headers", "Authorization, Content-Type");
+		addHeader(r.headers, "Access-Control-Max-Age", "600");
 		return r;
 	}
 
@@ -562,7 +567,7 @@ HttpApiServer::Response HttpApiServer::serveStatic(const QString &rawPath)
 	if (path.endsWith(QLatin1String(".html")))
 		data.replace("%%PRISMATIK_TOKEN%%", m_token.toUtf8());
 	r.body = data;
-	r.headers.append({ "Content-Security-Policy", "default-src 'self'; connect-src 'self' ws://127.0.0.1:" + QByteArray::number(m_port) + " ws://localhost:" + QByteArray::number(m_port) + "; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:" });
+	addHeader(r.headers, "Content-Security-Policy", "default-src 'self'; connect-src 'self' ws://127.0.0.1:" + QByteArray::number(m_port) + " ws://localhost:" + QByteArray::number(m_port) + "; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:");
 	return r;
 }
 
