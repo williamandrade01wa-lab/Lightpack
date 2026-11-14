@@ -753,6 +753,11 @@ QString Settings::getWebApiToken()
 	return valueMain(Main::Key::WebApi::Token).toString();
 }
 
+QString Settings::getWebPanelUrl()
+{
+	return QStringLiteral("http://127.0.0.1:%1/#t=%2").arg(getWebApiPort()).arg(getWebApiToken());
+}
+
 QStringList Settings::getWebApiAllowedOrigins()
 {
 	QStringList origins;

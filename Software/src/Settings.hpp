@@ -108,6 +108,8 @@ public:
 	static void setWebApiEnabled(bool isEnabled);
 	static int getWebApiPort();
 	static QString getWebApiToken();
+	// panel address with the token in the URL fragment (never sent to the server or logged)
+	static QString getWebPanelUrl();
 	static QStringList getWebApiAllowedOrigins();
 	static bool isWebApiLanAllowed();
 	// compositor groups of any profile (the current one goes through the normal setter)

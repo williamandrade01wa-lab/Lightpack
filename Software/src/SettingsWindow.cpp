@@ -58,6 +58,7 @@
 #include "BasicPanel.hpp"
 #include "Explanations.hpp"
 #include <QDesktopServices>
+#include <QTimer>
 #include <QUrl>
 
 using namespace SettingsScope;
@@ -359,8 +360,14 @@ void SettingsWindow::connectSignalsSlots()
 		if (on != Settings::isWebApiEnabled())
 			Settings::setWebApiEnabled(on);
 	});
-	connect(ui->pushButton_OpenWebPanel, &QPushButton::clicked, this, []() {
-		QDesktopServices::openUrl(QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(Settings::getWebApiPort())));
+	connect(ui->pushButton_OpenWebPanel, &QPushButton::clicked, this, [this]() {
+		// the server starts asynchronously when it was off: give it a moment before the browser asks
+		const bool wasOff = !Settings::isWebApiEnabled();
+		if (wasOff)
+			ui->checkBox_EnableWebApi->setChecked(true);
+		QTimer::singleShot(wasOff ? 800 : 0, this, []() {
+			QDesktopServices::openUrl(QUrl(Settings::getWebPanelUrl()));
+		});
 	});
 	connect(ui->checkBox_listenOnlyOnLoInterface, &QCheckBox::toggled, this, &SettingsWindow::onListenOnlyOnLoInterface_Toggled);
 	connect(ui->lineEdit_ApiPort, &QLineEdit::editingFinished, this, &SettingsWindow::onSetApiPort_Clicked);

@@ -29,6 +29,8 @@
 #include <QSystemTrayIcon>
 #include <QDesktopServices>
 #include <QNetworkReply>
+#include <QTimer>
+#include <QUrl>
 #include "Settings.hpp"
 
 SysTrayIcon::SysTrayIcon(QObject *parent) :
@@ -45,6 +47,7 @@ SysTrayIcon::SysTrayIcon(QObject *parent) :
 	trayIconMenu->addAction(_switchOffBacklightAction);
 	trayIconMenu->addSeparator();
 	trayIconMenu->addMenu(_profilesMenu);
+	trayIconMenu->addAction(_webPanelAction);
 	trayIconMenu->addAction(_settingsAction);
 	trayIconMenu->addSeparator();
 	trayIconMenu->addAction(_quitAction);
@@ -125,6 +128,7 @@ void SysTrayIcon::retranslateUi()
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
 	_switchOnBacklightAction->setText(tr("&Turn on"));
 	_switchOffBacklightAction->setText(tr("&Turn off"));
+	_webPanelAction->setText(tr("Open &web panel"));
 	_settingsAction->setText(tr("&Settings"));
 	_quitAction->setText(tr("&Quit"));
 	_profilesMenu->setTitle(tr("&Profiles"));
@@ -333,6 +337,17 @@ void SysTrayIcon::createActions()
 	_profilesMenu = new QMenu(tr("&Profiles"));
 	_profilesMenu->setIcon(QIcon(":/icons/profiles.png"));
 	_profilesMenu->clear();
+
+	_webPanelAction = new QAction(tr("Open &web panel"), this);
+	connect(_webPanelAction, &QAction::triggered, this, [this]() {
+		// the server starts asynchronously when it was off: give it a moment before the browser asks
+		const bool wasOff = !SettingsScope::Settings::isWebApiEnabled();
+		if (wasOff)
+			SettingsScope::Settings::setWebApiEnabled(true);
+		QTimer::singleShot(wasOff ? 800 : 0, this, []() {
+			QDesktopServices::openUrl(QUrl(SettingsScope::Settings::getWebPanelUrl()));
+		});
+	});
 
 	_settingsAction = new QAction(QIcon(":/icons/settings.png"), tr("&Settings"), this);
 	_settingsAction->setIconVisibleInMenu(true);

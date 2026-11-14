@@ -104,6 +104,7 @@ private:
 	QSystemTrayIcon * _qsystray;
 	QAction * _switchOnBacklightAction;
 	QAction * _switchOffBacklightAction;
+	QAction * _webPanelAction;
 	QAction * _settingsAction;
 	QAction * _quitAction;
 	QMenu * _profilesMenu;

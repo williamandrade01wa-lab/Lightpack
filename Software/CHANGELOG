@@ -13,6 +13,20 @@ _/_/_/_/  _/    _/_/_/  _/    _/      _/_/  _/_/_/      _/_/_/    _/_/_/  _/    
 #    Software changelog
 ===================================================================================
 
+Version 5.12.0.0
+---------------
+(unreleased, fork williamandrade01wa-lab/Lightpack)
+
+* Web panel (http://127.0.0.1:3637/, pt-BR, works offline, light/dark, phone width):
+  - Basic: on/off, brightness, profile, live preview of the strip drawn around
+    the monitor and the desk, quick effects
+  - Zones: select LEDs with click, Ctrl+click, Shift+click and drag; create,
+    rename and delete groups; mode per group (screen, solid, gradient, breathe,
+    rainbow, off); undo; apply to the profile
+  - Triggers: active overlays with stop buttons, test form, command for scripts
+* "Open web panel" (Expert mode and tray menu) passes the token in the URL
+  fragment, which never reaches the server or its logs; turns the server on if needed
+
 Version 5.11.5.0
 ---------------
 (unreleased, fork williamandrade01wa-lab/Lightpack)

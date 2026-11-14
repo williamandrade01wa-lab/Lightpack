@@ -677,4 +677,11 @@ Se uma janela em tela cheia estiver em foco num monitor capturado e nenhuma imag
         <translation>Numera a fileira de baixo no sentido contrário ao resto da volta. Use quando a fita contorna a tela e depois continua pela mesa da esquerda para a direita.</translation>
     </message>
 </context>
+<context>
+    <name>SysTrayIcon</name>
+    <message>
+        <source>Open &amp;web panel</source>
+        <translation>Abrir painel &amp;web</translation>
+    </message>
+</context>
 </TS>

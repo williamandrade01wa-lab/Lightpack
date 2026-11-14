@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Prismatik · Painel</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo" aria-hidden="true"></span>Prismatik</div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="inicio" aria-selected="true">Início</button>
+    <button role="tab" data-tab="zonas">Zonas</button>
+    <button role="tab" data-tab="gatilhos">Gatilhos</button>
+  </nav>
+  <div class="status">
+    <span id="conn" class="dot" title="Conexão"></span>
+    <span id="fps" class="muted"></span>
+    <button id="theme" class="icon" title="Trocar tema claro/escuro" aria-label="Trocar tema">◐</button>
+  </div>
+</header>
+
+<!-- sem token: explicação curta -->
+<section id="login" class="screen" hidden>
+  <div class="card narrow">
+    <h1>Abra o painel pelo Prismatik</h1>
+    <p>Por segurança, este painel só funciona quando é aberto pelo próprio Prismatik
+      (ele entrega uma senha escondida no endereço).</p>
+    <ol>
+      <li>Clique com o botão direito no ícone do Prismatik perto do relógio e escolha
+        <b>Abrir painel web</b>,</li>
+      <li>ou abra a janela do Prismatik, ative o <b>Modo Expert</b> e clique em
+        <b>Abrir painel web</b>.</li>
+    </ol>
+    <p class="muted" id="loginWhy"></p>
+  </div>
+</section>
+
+<main id="app" hidden>
+  <!-- ============ INÍCIO (modo básico) ============ -->
+  <section id="tab-inicio" class="screen">
+    <div class="grid2">
+      <div class="card">
+        <h2>Luzes</h2>
+        <label class="switch-row">
+          <span><b>Ligadas</b><br><small class="muted">Liga ou desliga a fita de LED.</small></span>
+          <input type="checkbox" id="on" class="switch">
+        </label>
+        <label class="field">
+          <span><b>Brilho</b> <output id="brightnessOut"></output></span>
+          <input type="range" id="brightness" min="0" max="100" step="1">
+          <small class="muted">Quanto a fita acende, de 0% (apagada) a 100%.</small>
+        </label>
+        <label class="field">
+          <span><b>Perfil</b></span>
+          <select id="profile"></select>
+          <small class="muted">Cada perfil guarda um jeito de usar as luzes (zonas, cores, velocidade).</small>
+        </label>
+        <p class="muted small" id="deviceInfo"></p>
+      </div>
+      <div class="card">
+        <h2>Efeitos rápidos</h2>
+        <p class="muted small">Toca um efeito por alguns segundos por cima do que está aceso. Bom para testar.</p>
+        <div class="fxbtns">
+          <button data-quick="whats"><i style="--c:#25d366"></i>Piscar verde</button>
+          <button data-quick="pulse"><i style="--c:#ff6a00"></i>Pulso laranja</button>
+          <button data-quick="wave"><i style="--c:#2a7bff"></i>Onda azul</button>
+          <button data-quick="rainbow"><i class="rb"></i>Arco-íris 5 s</button>
+          <button data-quick="stop" class="danger">Parar efeitos</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Prévia ao vivo</h2>
+      <p class="muted small">Cada bolinha é um LED, no lugar onde ele fica. As cores são as que estão indo para a fita agora.</p>
+      <div class="stage" id="previewStage"></div>
+    </div>
+  </section>
+
+  <!-- ============ ZONAS (editor) ============ -->
+  <section id="tab-zonas" class="screen" hidden>
+    <div class="card">
+      <h2>Escolha os LEDs</h2>
+      <p class="muted small">
+        <b>Clique</b> em um LED para escolher. <b>Ctrl + clique</b> soma ou tira um LED.
+        <b>Shift + clique</b> pega todos entre o último e este. <b>Arraste</b> num espaço vazio para pegar uma área.
+        Duplo clique escolhe o grupo inteiro.
+      </p>
+      <div class="stage editor" id="editorStage"></div>
+      <div class="selbar">
+        <span id="selInfo" class="muted">Nenhum LED escolhido.</span>
+        <label class="chk"><input type="checkbox" id="addMode"> Somar à escolha (como Ctrl, útil no celular)</label>
+        <span class="spacer"></span>
+        <button id="selAll">Todos</button>
+        <button id="selFree">Sem grupo</button>
+        <button id="selClear">Limpar</button>
+        <button id="newGroup" class="primary">Criar grupo com os escolhidos</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <h2>Grupos do perfil <span id="groupsProfile"></span></h2>
+        <span class="spacer"></span>
+      </div>
+      <p class="muted small">Um grupo é um pedaço da fita com um jeito próprio de acender.
+        LEDs que não estão em nenhum grupo seguem o modo normal do perfil (normalmente, a tela).</p>
+      <div id="groups"></div>
+    </div>
+
+    <div class="savebar" id="savebar" hidden>
+      <span id="saveMsg">Há mudanças ainda não aplicadas.</span>
+      <span class="spacer"></span>
+      <button id="undo" title="Desfazer (Ctrl+Z)">Desfazer</button>
+      <button id="discard">Descartar</button>
+      <button id="save" class="primary">Aplicar na fita</button>
+    </div>
+  </section>
+
+  <!-- ============ GATILHOS ============ -->
+  <section id="tab-gatilhos" class="screen" hidden>
+    <div class="card">
+      <h2>Efeitos tocando agora</h2>
+      <p class="muted small">Gatilhos são efeitos temporários por cima do que está aceso. Apps (WhatsApp, Claude, scripts) usam isso para chamar sua atenção.</p>
+      <div id="overlays"></div>
+      <button id="stopAll" class="danger">Parar todos</button>
+    </div>
+    <div class="card">
+      <h2>Testar um efeito</h2>
+      <form id="trigForm" class="form">
+        <label class="field"><span><b>Onde</b></span>
+          <select id="tTarget">
+            <option value="all">Fita toda</option>
+            <option value="sel">LEDs escolhidos na aba Zonas</option>
+          </select>
+        </label>
+        <label class="field"><span><b>Efeito</b></span>
+          <select id="tType">
+            <option value="pulse">Pulsar (acende e apaga suave)</option>
+            <option value="flash">Piscar (liga/desliga seco)</option>
+            <option value="wave">Onda (luz correndo)</option>
+            <option value="breathe">Respirar (devagar)</option>
+            <option value="rainbow">Arco-íris</option>
+            <option value="solid">Cor fixa</option>
+          </select>
+        </label>
+        <label class="field" data-for="color"><span><b>Cor</b></span><input type="color" id="tColor" value="#25d366"></label>
+        <label class="field"><span><b>Velocidade</b> <output id="tPeriodOut"></output></span>
+          <input type="range" id="tPeriod" min="200" max="5000" step="100" value="700">
+          <small class="muted">Tempo de um ciclo. Menor = mais rápido.</small></label>
+        <label class="field" data-for="count"><span><b>Repetições</b></span>
+          <input type="number" id="tCount" min="0" max="100" value="3">
+          <small class="muted">0 = repete até você parar.</small></label>
+        <label class="field"><span><b>Duração máxima (segundos)</b></span>
+          <input type="number" id="tDur" min="0" max="3600" value="0">
+          <small class="muted">0 = até acabar as repetições ou você parar.</small></label>
+        <label class="field"><span><b>Prioridade</b> <output id="tPrioOut"></output></span>
+          <input type="range" id="tPrio" min="0" max="100" value="60">
+          <small class="muted">Se dois efeitos tocam juntos, o de número maior fica por cima.</small></label>
+        <label class="field"><span><b>Mistura</b></span>
+          <select id="tBlend">
+            <option value="alpha">Misturar com o que está aceso</option>
+            <option value="override">Substituir (cobre tudo)</option>
+            <option value="add">Somar luz (fica mais forte)</option>
+          </select>
+        </label>
+        <label class="field"><span><b>Nome</b></span>
+          <input type="text" id="tId" value="teste-painel" maxlength="40">
+          <small class="muted">Disparar de novo com o mesmo nome reinicia o efeito em vez de empilhar.</small></label>
+        <div class="row"><button type="submit" class="primary">Disparar</button></div>
+      </form>
+      <details>
+        <summary>Comando para usar em scripts</summary>
+        <p class="muted small">Troque <code>SEU_TOKEN</code> pelo valor de <code>Token</code> em <code>main.conf</code> (seção <code>[WebApi]</code>). Nunca compartilhe esse token.</p>
+        <pre id="tCmd"></pre>
+      </details>
+    </div>
+  </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
