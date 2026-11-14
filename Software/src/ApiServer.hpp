@@ -197,6 +197,8 @@ public:
 	static const char * const CmdSetPersistOnUnlock;
 	static const char * const CmdSetPersistOnUnlock_On;
 	static const char * const CmdSetPersistOnUnlock_Off;
+	static const char * const CmdTrigger;
+	static const char * const CmdUntrigger;
 
 	static const int SignalWaitTimeoutMs;
 
@@ -205,6 +207,9 @@ signals:
 	void errorOnStartListening(QString errorMessage);
 	void clearColorBuffers();
 	void updateApiDeviceNumberOfLeds(int value);
+	// overlay effects for the frame compositor (no lock needed: they layer over the current mode)
+	void triggerOverlay(const QString &json);
+	void removeOverlay(const QString &id);
 
 public slots:
 	void apiServerSettingsChanged();

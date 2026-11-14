@@ -173,6 +173,9 @@ public:
 	static void setFullscreenWatchdogEnabled(bool isEnabled);
 	static int getWatchdogStallMs();
 	static void setWatchdogStallMs(int ms);
+	// LED groups with per-group modes for the frame compositor (JSON array, per profile)
+	static QString getCompositorGroupsJson();
+	static void setCompositorGroupsJson(const QString &json);
 	static bool isBacklightEnabled();
 	static void setIsBacklightEnabled(bool isEnabled);
 	static bool isGrabAvgColorsEnabled();
@@ -358,6 +361,7 @@ signals:
 	void virtualPowerSupplyAmpsChanged(const double amps);
 	void grabSlowdownChanged(int value);
 	void grabPerformanceChanged();
+	void compositorGroupsChanged();
 	void backlightEnabledChanged(bool isEnabled);
 	void grabAvgColorsEnabledChanged(bool isEnabled);
 	void grabOverBrightenChanged(int value);

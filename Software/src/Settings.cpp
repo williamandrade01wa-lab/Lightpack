@@ -201,6 +201,8 @@ static const QString IsApplyBlueLightReductionEnabled = QStringLiteral("Grab/IsA
 static const QString IsApplyColorTemperatureEnabled = QStringLiteral("Grab/IsApplyColorTemperatureEnabled");
 static const QString ColorTemperature = QStringLiteral("Grab/ColorTemperature");
 static const QString Gamma = QStringLiteral("Grab/Gamma");
+// JSON array of LED groups with their own modes (FrameCompositor); empty = all LEDs follow the profile mode
+static const QString CompositorGroups = QStringLiteral("Compositor/Groups");
 static const QString DownscaleLevel = QStringLiteral("Grab/DownscaleLevel");
 static const QString IsFullscreenWatchdogEnabled = QStringLiteral("Grab/IsFullscreenWatchdogEnabled");
 static const QString WatchdogStallMs = QStringLiteral("Grab/WatchdogStallMs");
@@ -1344,6 +1346,18 @@ void Settings::setFullscreenWatchdogEnabled(bool isEnabled)
 int Settings::getWatchdogStallMs()
 {
 	return qBound(Profile::Grab::WatchdogStallMsMin, value(Profile::Key::Grab::WatchdogStallMs).toInt(), Profile::Grab::WatchdogStallMsMax);
+}
+
+QString Settings::getCompositorGroupsJson()
+{
+	return value(Profile::Key::Grab::CompositorGroups).toString();
+}
+
+void Settings::setCompositorGroupsJson(const QString &json)
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
+	setValue(Profile::Key::Grab::CompositorGroups, json);
+	emit m_this->compositorGroupsChanged();
 }
 
 void Settings::setWatchdogStallMs(int ms)

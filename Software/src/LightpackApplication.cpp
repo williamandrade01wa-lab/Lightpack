@@ -661,6 +661,9 @@ void LightpackApplication::startApiServer()
 
 	m_apiServer->firstStart();
 
+	// "trigger:"/"untrigger:" API commands -> overlays in the frame compositor
+	connect(m_apiServer, &ApiServer::triggerOverlay, m_frameCompositor, &FrameCompositor::triggerOverlay, Qt::QueuedConnection);
+	connect(m_apiServer, &ApiServer::removeOverlay, m_frameCompositor, &FrameCompositor::removeOverlay, Qt::QueuedConnection);
 	m_apiServer->moveToThread(m_apiServerThread);
 	m_apiServerThread->start();
 }
@@ -740,6 +743,7 @@ void LightpackApplication::startLedDeviceManager()
 	connect(settings(), &Settings::ardulightNumberOfLedsChanged, this, &LightpackApplication::updateFrameCompositor);
 	connect(settings(), &Settings::deviceSmoothChanged, this, &LightpackApplication::updateFrameCompositor);
 	connect(settings(), &Settings::currentProfileInited, this, &LightpackApplication::updateFrameCompositor);
+	connect(settings(), &Settings::compositorGroupsChanged, this, &LightpackApplication::updateFrameCompositor);
 
 	m_ledDeviceManager->moveToThread(m_ledDeviceManagerThread);
 	m_frameCompositor->moveToThread(m_ledDeviceManagerThread); // same thread: frameReady -> setColors is a direct call
@@ -779,6 +783,7 @@ void LightpackApplication::updateFrameCompositor()
 	QMetaObject::invokeMethod(m_frameCompositor, "setMaxFps", Qt::QueuedConnection, Q_ARG(double, maxFps));
 	QMetaObject::invokeMethod(m_frameCompositor, "setSoftwareSmoothingEnabled", Qt::QueuedConnection, Q_ARG(bool, softwareSmoothing));
 	QMetaObject::invokeMethod(m_frameCompositor, "setSmoothness", Qt::QueuedConnection, Q_ARG(int, smoothness));
+	QMetaObject::invokeMethod(m_frameCompositor, "setGroupsJson", Qt::QueuedConnection, Q_ARG(QString, Settings::getCompositorGroupsJson()));
 
 	// no point grabbing the screen faster than the LEDs can be updated
 	if (m_grabManager)

@@ -307,6 +307,7 @@ SOURCES += \
     BasicPanel.cpp \
     Explanations.cpp \
     compositor/FrameCompositor.cpp \
+    compositor/Effects.cpp \
     ApiServer.cpp \
     ApiServerSetColorTask.cpp \
     MoodLampManager.cpp \
@@ -364,6 +365,7 @@ HEADERS += \
     BasicPanel.hpp \
     Explanations.hpp \
     compositor/FrameCompositor.hpp \
+    compositor/Effects.hpp \
     ../common/defs.h \
     enums.hpp         ApiServer.hpp     ApiServerSetColorTask.hpp \
     hidapi/hidapi.h \

@@ -33,7 +33,9 @@
 #include "Settings.hpp"
 #include "TimeEvaluations.hpp"
 #include "version.h"
+#include "compositor/FrameCompositor.hpp"
 #include <QApplication>
+#include <cstring>
 
 using namespace SettingsScope;
 
@@ -178,6 +180,8 @@ const char * const ApiServer::CmdSetBacklight_SoundViz = "soundviz";
 const char * const ApiServer::CmdSetPersistOnUnlock = "setpersistonunlock:";
 const char * const ApiServer::CmdSetPersistOnUnlock_On = "on";
 const char * const ApiServer::CmdSetPersistOnUnlock_Off = "off";
+const char * const ApiServer::CmdTrigger = "trigger:";
+const char * const ApiServer::CmdUntrigger = "untrigger:";
 
 const int ApiServer::SignalWaitTimeoutMs = 1000; // 1 second
 
@@ -968,6 +972,31 @@ void ApiServer::clientProcessCommands()
 			}
 		}
 #endif
+		else if (cmdBuffer.startsWith(CmdTrigger))
+		{
+			// trigger:{"id":"whatsapp","target":{"groups":["desk-ends"]},"effect":{"type":"pulse","color":"#25D366"}}
+			// Overlays layer on top of whatever runs, so no lock is required.
+			const QString json = QString::fromUtf8(cmdBuffer.mid(int(strlen(CmdTrigger))));
+			QString error;
+			if (FrameCompositor::validateOverlayJson(json, &error)) {
+				emit triggerOverlay(json);
+				result = CmdSetResult_Ok;
+			} else {
+				API_DEBUG_OUT << CmdTrigger << "Error:" << error;
+				result = QStringLiteral("error: %1
+").arg(error);
+			}
+		}
+		else if (cmdBuffer.startsWith(CmdUntrigger))
+		{
+			const QString id = QString::fromUtf8(cmdBuffer.mid(int(strlen(CmdUntrigger)))).trimmed();
+			if (id.isEmpty()) {
+				result = CmdSetResult_Error;
+			} else {
+				emit removeOverlay(id);
+				result = CmdSetResult_Ok;
+			}
+		}
 		else if (cmdBuffer.startsWith(CmdSetPersistOnUnlock))
 		{
 			API_DEBUG_OUT << CmdSetPersistOnUnlock;
