@@ -983,8 +983,7 @@ void ApiServer::clientProcessCommands()
 				result = CmdSetResult_Ok;
 			} else {
 				API_DEBUG_OUT << CmdTrigger << "Error:" << error;
-				result = QStringLiteral("error: %1
-").arg(error);
+				result = QStringLiteral("error: %1\r\n").arg(error);
 			}
 		}
 		else if (cmdBuffer.startsWith(CmdUntrigger))
