@@ -141,15 +141,27 @@ void applySidebar(QListWidget *sidebar)
 		sidebar->setIconSize(QSize(26, 26));
 	}
 
-	// Uniform item cells instead of free-flowing icons with 20px spacing
+	// Fixed-width column of uniform cells. In IconMode each item is otherwise only as wide as
+	// its own content, which clipped longer labels ("Dispositivo") and made the highlight a sliver.
+	const int columnWidth = 112;
+	const QSize cell(columnWidth - 12, 66);
+	sidebar->setFixedWidth(columnWidth);
+	sidebar->setMinimumHeight(0);
+	sidebar->setFlow(QListView::TopToBottom);
+	sidebar->setWrapping(false);
 	sidebar->setSpacing(0);
-	sidebar->setGridSize(QSize(sidebar->minimumWidth() > 0 ? sidebar->minimumWidth() - 4 : 100, 68));
+	sidebar->setGridSize(QSize(cell.width(), cell.height() + 4));
+	sidebar->setWordWrap(true);
+	for (int i = 0; i < sidebar->count(); ++i) {
+		sidebar->item(i)->setSizeHint(cell);
+		sidebar->item(i)->setTextAlignment(Qt::AlignHCenter | Qt::AlignBottom);
+	}
 	sidebar->setUniformItemSizes(true);
 	sidebar->setFocusPolicy(Qt::NoFocus); // no dotted focus rectangle around the current page
 
 	sidebar->setStyleSheet(QStringLiteral(
 		"QListWidget#%1 { background: %2; border: none; border-radius: 10px; padding: 6px 0px; outline: 0; }"
-		"QListWidget#%1::item { color: %3; border-radius: 8px; margin: 2px 1px; padding-top: 8px; }"
+		"QListWidget#%1::item { color: %3; border-radius: 8px; margin: 2px 6px; padding-top: 6px; padding-bottom: 4px; }"
 		"QListWidget#%1::item:hover:!selected { background: %4; }"
 		"QListWidget#%1::item:selected { background: %5; color: %3; border-left: 3px solid %6; }")
 		.arg(sidebar->objectName(),
@@ -173,7 +185,9 @@ void applyWindow(QWidget *window, QPushButton *primaryButton)
 	QString style = QStringLiteral(
 		// group boxes: one consistent rounded card style with a bold title
 		"QGroupBox { border: 1px solid %1; border-radius: 8px; margin-top: 14px; padding: 12px 8px 8px 8px; }"
-		"QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0px 4px; font-weight: 600; }")
+		"QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0px 4px; font-weight: 600; }"
+		// number fields were clipping their value ("50%" showed as "50:")
+		"QAbstractSpinBox { min-width: 64px; }")
 		.arg(rgba(withAlpha(text, 40)));
 
 	if (primaryButton) {

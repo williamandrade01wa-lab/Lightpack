@@ -1196,29 +1196,44 @@ void SettingsWindow::refreshAmbilightEvaluated(double updateResultMs)
 	if (updateResultMs != 0)
 		hz = 1000.0 / updateResultMs; /* ms to hz */
 
+	const SupportedDevices::DeviceType device = Settings::getConnectedDevice();
+	const bool serialDevice = device == SupportedDevices::DeviceTypeArdulight || device == SupportedDevices::DeviceTypeAdalight;
+	double serialMaxHz = 0.0;
+	if (serialDevice) {
+		const double ledCount = static_cast<double>(Settings::getNumberOfLeds(device));
+		const double baudRate = static_cast<double>(device == SupportedDevices::DeviceTypeAdalight ? Settings::getAdalightSerialPortBaudRate() : Settings::getArdulightSerialPortBaudRate());
+		serialMaxHz = PrismatikMath::theoreticalMaxFrameRate(ledCount, baudRate);
+	}
+
 	QString fpsText = QString::number(hz, 'f', 0);
 	if (ui->comboBox_LightpackModes->currentIndex() == GrabModeIndex) {
-		const double maxHz = 1000.0 / ui->spinBox_GrabSlowdown->value(); // cap with display refresh rate?
+		double maxHz = 1000.0 / ui->spinBox_GrabSlowdown->value();
+		// the frame compositor never sends more than the serial link carries,
+		// and the grabber is slowed down to match, so that is the real ceiling
+		if (serialMaxHz > 0.0 && serialMaxHz < maxHz)
+			maxHz = serialMaxHz;
 		fpsText += QStringLiteral(" / %1").arg(QString::number(maxHz, 'f', 0));
 	}
 	ui->label_GrabFrequency_value->setText(fpsText);
 
-	const SupportedDevices::DeviceType device = Settings::getConnectedDevice();
-
-	if (device == SupportedDevices::DeviceTypeArdulight || device == SupportedDevices::DeviceTypeAdalight) {
+	if (serialDevice) {
 		const double ledCount = static_cast<double>(Settings::getNumberOfLeds(device));
 		const double baudRate = static_cast<double>(device == SupportedDevices::DeviceTypeAdalight ? Settings::getAdalightSerialPortBaudRate() : Settings::getArdulightSerialPortBaudRate());
 		m_maxFPS = std::max(hz, m_maxFPS);
-		const double theoreticalMaxHz = PrismatikMath::theoreticalMaxFrameRate(ledCount, baudRate);
+		const double theoreticalMaxHz = serialMaxHz;
 
 		DEBUG_HIGH_LEVEL << Q_FUNC_INFO << "Therotical Max Hz for led count and baud rate:" << theoreticalMaxHz << ledCount << baudRate;
-		if (theoreticalMaxHz <= hz)
-			qWarning() << Q_FUNC_INFO << hz << "FPS went over theoretical max of" << theoreticalMaxHz;
 
 		const QPalette& defaultPalette = ui->label_GrabFrequency_txt_fps->palette();
 
 		QPalette palette = ui->label_GrabFrequency_value->palette();
-		if (theoreticalMaxHz <= m_maxFPS) {
+		this->labelFPS->setToolTip(tr("Limited to %1 FPS by the serial link (%2 LEDs at %3 baud). "
+			"A higher baud rate in the device firmware allows more.")
+			.arg(theoreticalMaxHz, 0, 'f', 1).arg(ledCount).arg(baudRate));
+		// The red "!!!" warning is obsolete: the compositor caps the frame rate to the
+		// link, so frames can't pile up any more. Only warn if the measured rate is
+		// clearly above what the link can carry (i.e. something bypassed the cap).
+		if (theoreticalMaxHz * 1.15 < m_maxFPS) {
 			palette.setColor(QPalette::WindowText, Qt::red);
 			fpsText += BaudrateWarningSign;
 

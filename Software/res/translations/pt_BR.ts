@@ -310,6 +310,10 @@
 <context>
     <name>SettingsWindow</name>
     <message>
+        <source>Limited to %1 FPS by the serial link (%2 LEDs at %3 baud). A higher baud rate in the device firmware allows more.</source>
+        <translation>Limitado a %1 FPS pela porta serial (%2 LEDs a %3 baud). Uma velocidade maior no firmware do dispositivo permite mais.</translation>
+    </message>
+    <message>
         <source>Basic</source>
         <translation>Básico</translation>
     </message>
