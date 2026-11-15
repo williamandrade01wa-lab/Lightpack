@@ -97,6 +97,7 @@ private slots:
 private:
 	void createActions();
 	void fillProfilesFromSettings();
+	void fillModesFromSettings();
 
 private:
 	UpdatesProcessor _updatesProcessor;
@@ -108,6 +109,7 @@ private:
 	QAction * _settingsAction;
 	QAction * _quitAction;
 	QMenu * _profilesMenu;
+	QMenu * _modesMenu;     // scenes of the current profile, rebuilt every time it opens
 	SysTrayIcon::Message _trayMessage;
 	QUrl _trayMsgUrl;
 	SysTrayIcon::Status _status;

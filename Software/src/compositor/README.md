@@ -38,6 +38,31 @@ Position along a group (for gradients, waves) follows the order given.
 | `breathe` | `color`, `period_ms` (1000), `min` (0..1), `brightness` |
 | `rainbow` | `period_ms` (8000), `brightness` |
 
+A `source` group may carry `brightness` too (e.g. the monitor at 0.6 while the desk stays at 1).
+
+## Scenes ("Modos")
+
+Profile key `Compositor/Scenes` (JSON array) plus `Compositor/ActiveScene` (id). While the
+profile has no scenes saved, three built-in ones are offered: `trabalho`, `midia`, `foco`
+(monitor 0-70, `desk-left` 71-97, `desk-center` 98-131, `desk-right` 132-158).
+
+```json
+[{ "id": "trabalho", "name": "Trabalho", "groups": [ ...same format as Compositor/Groups... ],
+   "triggers": { "allow": ["claude", "chatgpt", "whatsapp", "sistema"], "min_priority": 0,
+                 "target_groups": ["desk-left", "desk-right"] } }]
+```
+
+Activating a scene (tray > Modes, `POST /api/v1/scenes/{id}/activate`) copies its `groups`
+into `Compositor/Groups`; the capture is not restarted. Web API: `GET/PUT /api/v1/scenes`
+(array), `GET /api/v1/scenes/{id}`, `state.scene`, WebSocket event `scene.changed`
+(`data.scene` = `data.id` = the id, `data.name`).
+
+Trigger policy (web API `POST /trigger` only): a trigger with `source` whose source is not in
+`allow` (empty = any) or whose `priority` (50) is below `min_priority` answers
+`202 {"suppressed": true, "reason": "source"|"priority"}` and nothing lights. Triggers without
+`source` (manual tests, the legacy TCP API) are never filtered. A trigger without `target`
+lights the scene's `target_groups` (those that exist), or every LED.
+
 ## Overlays (triggers)
 
 Legacy API (TCP, default port 3636, enable it in Expert > Enable server), one line per command:

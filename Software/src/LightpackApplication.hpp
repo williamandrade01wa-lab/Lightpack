@@ -73,6 +73,9 @@ public slots:
 	void setStatusChanged(Backlight::Status);
 	void setBacklightChanged(Lightpack::Mode);
 	void processMessageWithNoGui(const QString &message);
+	// applies a scene of the current profile (its groups + Compositor/ActiveScene);
+	// called by the tray "Modes" menu (through qApp) and the web API
+	void activateScene(const QString &id);
 
 private slots:
 	void requestBacklightStatus();
@@ -92,6 +95,7 @@ private slots:
 	void webSetStatus(int status);
 	void webSetBrightness(int value);
 	void webSetGroups(const QString &profile, const QString &json);
+	void webSetScenes(const QString &json);
 
 private:
 	void processCommandLineArguments();

@@ -212,6 +212,9 @@ static const QString ColorTemperature = QStringLiteral("Grab/ColorTemperature");
 static const QString Gamma = QStringLiteral("Grab/Gamma");
 // JSON array of LED groups with their own modes (FrameCompositor); empty = all LEDs follow the profile mode
 static const QString CompositorGroups = QStringLiteral("Compositor/Groups");
+// JSON array of scenes (groups + trigger policy, see compositor/Scenes.hpp) and the active scene id
+static const QString CompositorScenes = QStringLiteral("Compositor/Scenes");
+static const QString CompositorActiveScene = QStringLiteral("Compositor/ActiveScene");
 static const QString DownscaleLevel = QStringLiteral("Grab/DownscaleLevel");
 static const QString IsFullscreenWatchdogEnabled = QStringLiteral("Grab/IsFullscreenWatchdogEnabled");
 static const QString WatchdogStallMs = QStringLiteral("Grab/WatchdogStallMs");
@@ -1440,6 +1443,30 @@ void Settings::setCompositorGroupsJson(const QString &json)
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
 	setValue(Profile::Key::Grab::CompositorGroups, json);
 	emit m_this->compositorGroupsChanged();
+}
+
+QString Settings::getCompositorScenesJson()
+{
+	return value(Profile::Key::Grab::CompositorScenes).toString();
+}
+
+void Settings::setCompositorScenesJson(const QString &json)
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
+	setValue(Profile::Key::Grab::CompositorScenes, json);
+	emit m_this->compositorScenesChanged();
+}
+
+QString Settings::getCompositorActiveScene()
+{
+	return value(Profile::Key::Grab::CompositorActiveScene).toString();
+}
+
+void Settings::setCompositorActiveScene(const QString &id)
+{
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO << id;
+	setValue(Profile::Key::Grab::CompositorActiveScene, id);
+	emit m_this->compositorActiveSceneChanged(id);
 }
 
 void Settings::setWatchdogStallMs(int ms)
