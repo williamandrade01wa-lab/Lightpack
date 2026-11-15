@@ -50,6 +50,7 @@ HEADERS += \
     ../src/ApiServer.hpp \
     ../src/compositor/FrameCompositor.hpp \
     ../src/compositor/Effects.hpp \
+    ../src/compositor/Scenes.hpp \
     ../src/debug.h \
     ../src/Settings.hpp \
     ../src/Plugin.hpp \
@@ -70,6 +71,7 @@ SOURCES += \
     ../src/ApiServer.cpp \
     ../src/compositor/FrameCompositor.cpp \
     ../src/compositor/Effects.cpp \
+    ../src/compositor/Scenes.cpp \
     ../src/Settings.cpp \
     ../src/Plugin.cpp \
     ../src/LightpackPluginInterface.cpp \

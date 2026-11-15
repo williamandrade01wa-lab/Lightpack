@@ -25,6 +25,7 @@
  */
 #include "SysTrayIcon.hpp"
 
+#include <QCoreApplication>
 #include <QStringList>
 #include <QSystemTrayIcon>
 #include <QDesktopServices>
@@ -32,6 +33,7 @@
 #include <QTimer>
 #include <QUrl>
 #include "Settings.hpp"
+#include "compositor/Scenes.hpp"
 
 SysTrayIcon::SysTrayIcon(QObject *parent) :
 	QObject(parent)
@@ -46,6 +48,7 @@ SysTrayIcon::SysTrayIcon(QObject *parent) :
 	trayIconMenu->addAction(_switchOnBacklightAction);
 	trayIconMenu->addAction(_switchOffBacklightAction);
 	trayIconMenu->addSeparator();
+	trayIconMenu->addMenu(_modesMenu);
 	trayIconMenu->addMenu(_profilesMenu);
 	trayIconMenu->addAction(_webPanelAction);
 	trayIconMenu->addAction(_settingsAction);
@@ -60,6 +63,7 @@ SysTrayIcon::~SysTrayIcon()
 {
 	delete _qsystray->contextMenu();
 	delete _profilesMenu;
+	delete _modesMenu;
 	delete _qsystray;
 }
 
@@ -132,6 +136,7 @@ void SysTrayIcon::retranslateUi()
 	_settingsAction->setText(tr("&Settings"));
 	_quitAction->setText(tr("&Quit"));
 	_profilesMenu->setTitle(tr("&Profiles"));
+	_modesMenu->setTitle(tr("&Modes"));
 
 	fillProfilesFromSettings();
 
@@ -338,6 +343,10 @@ void SysTrayIcon::createActions()
 	_profilesMenu->setIcon(QIcon(":/icons/profiles.png"));
 	_profilesMenu->clear();
 
+	// scenes can change from the web panel at any time: read them when the menu opens
+	_modesMenu = new QMenu(tr("&Modes"));
+	connect(_modesMenu, &QMenu::aboutToShow, this, &SysTrayIcon::fillModesFromSettings);
+
 	_webPanelAction = new QAction(tr("Open &web panel"), this);
 	connect(_webPanelAction, &QAction::triggered, this, [this]() {
 		// the server starts asynchronously when it was off: give it a moment before the browser asks
@@ -374,5 +383,30 @@ void SysTrayIcon::fillProfilesFromSettings()
 		}
 		_profilesMenu->addAction(profileAction);
 		connect(profileAction, &QAction::triggered, this, &SysTrayIcon::onProfileAction_Triggered);
+	}
+}
+
+void SysTrayIcon::fillModesFromSettings()
+{
+	using namespace SettingsScope;
+	_modesMenu->clear();
+	if (!Settings::isProfileLoaded())
+		return;
+
+	const QString active = Settings::getCompositorActiveScene();
+	const QJsonArray scenes = Compositor::scenesFromJson(Settings::getCompositorScenesJson());
+	for (const QJsonValue &v : scenes) {
+		const QJsonObject scene = v.toObject();
+		const QString id = scene.value(QLatin1String("id")).toString();
+		if (id.isEmpty())
+			continue;
+		QAction *modeAction = new QAction(scene.value(QLatin1String("name")).toString(id), _modesMenu);
+		modeAction->setCheckable(true);
+		modeAction->setChecked(id == active);
+		_modesMenu->addAction(modeAction);
+		// LightpackApplication::activateScene (GUI thread; same path as the web API)
+		connect(modeAction, &QAction::triggered, this, [id]() {
+			QMetaObject::invokeMethod(QCoreApplication::instance(), "activateScene", Qt::QueuedConnection, Q_ARG(QString, id));
+		});
 	}
 }

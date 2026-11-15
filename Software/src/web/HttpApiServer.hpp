@@ -65,6 +65,7 @@ public slots:
 	void setScreensJson(const QString &json);
 	void onProfileChanged(const QString &name);
 	void onStatusChanged(int status);
+	void onSceneChanged(const QString &id);
 
 signals:
 	// requests for the GUI thread
@@ -72,6 +73,8 @@ signals:
 	void statusRequested(int status);
 	void brightnessRequested(int value);
 	void groupsWriteRequested(const QString &profile, const QString &json);
+	void scenesWriteRequested(const QString &json);     // current profile
+	void sceneActivateRequested(const QString &id);
 	void triggerRequested(const QString &json);
 	void removeRequested(const QString &id);
 
@@ -124,6 +127,7 @@ private:
 	Response handleTrigger(const Request &request, const QStringList &parts);
 	Response handleLayout();
 	Response handleProfiles();
+	Response handleScenes(const Request &request, const QStringList &parts);
 	QJsonObject stateJson() const;
 
 	// helpers
@@ -134,6 +138,8 @@ private:
 	QJsonArray groupsFor(const QString &profile) const;
 	void writeGroups(const QString &profile, const QJsonArray &groups);
 	bool validateGroups(const QJsonArray &groups, Response *error) const;
+	QJsonArray scenes() const;          // current profile (built-in defaults when none saved)
+	QString activeScene() const;        // "" = none
 	bool allowTrigger();
 	Response doTrigger(QJsonObject trigger);
 	int ledCount() const;
@@ -175,4 +181,7 @@ private:
 	// groups written through the API and not yet visible in the settings file
 	struct CachedGroups { QString json; QElapsedTimer age; };
 	mutable QHash<QString, CachedGroups> m_groupsCache;
+	// same for scenes and the active scene of the current profile
+	CachedGroups m_scenesCache;
+	CachedGroups m_activeSceneCache;
 };

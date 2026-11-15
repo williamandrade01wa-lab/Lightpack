@@ -188,6 +188,11 @@ public:
 	// LED groups with per-group modes for the frame compositor (JSON array, per profile)
 	static QString getCompositorGroupsJson();
 	static void setCompositorGroupsJson(const QString &json);
+	// scenes of the current profile (JSON array, empty = built-in defaults) and the active one
+	static QString getCompositorScenesJson();
+	static void setCompositorScenesJson(const QString &json);
+	static QString getCompositorActiveScene();
+	static void setCompositorActiveScene(const QString &id);
 	static bool isBacklightEnabled();
 	static void setIsBacklightEnabled(bool isEnabled);
 	static bool isGrabAvgColorsEnabled();
@@ -374,6 +379,8 @@ signals:
 	void grabSlowdownChanged(int value);
 	void grabPerformanceChanged();
 	void compositorGroupsChanged();
+	void compositorScenesChanged();
+	void compositorActiveSceneChanged(const QString &id);
 	void webApiSettingsChanged();
 	void backlightEnabledChanged(bool isEnabled);
 	void grabAvgColorsEnabledChanged(bool isEnabled);

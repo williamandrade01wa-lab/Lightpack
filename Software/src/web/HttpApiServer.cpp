@@ -18,6 +18,7 @@
 #include "version.h"
 #include "compositor/Effects.hpp"
 #include "compositor/FrameCompositor.hpp"
+#include "compositor/Scenes.hpp"
 
 #include <QDateTime>
 #include <QDir>
@@ -47,6 +48,10 @@ namespace
 	const int WsAuthTimeoutMs = 5000;
 	const int WsMaxMessageBytes = 64 * 1024;
 	const qint64 WsBackpressureBytes = 1024 * 1024;
+	const int MaxScenes = 16;
+	const int MaxSourceLength = 40;
+	// how long a value written through the API wins over the (queued) settings write
+	const int CacheMs = 3000;
 
 	void addHeader(QList<QPair<QByteArray, QByteArray>> &list, const QByteArray &key, const QByteArray &value)
 	{
@@ -257,6 +262,23 @@ void HttpApiServer::onProfileChanged(const QString &name)
 	QJsonObject o;
 	o.insert(QStringLiteral("profile"), name);
 	emitEvent(QStringLiteral("profile.changed"), o);
+	// scenes live in the profile: forget values cached for the previous one
+	m_scenesCache.age.invalidate();
+	m_activeSceneCache.age.invalidate();
+	onSceneChanged(Settings::getCompositorActiveScene());
+}
+
+void HttpApiServer::onSceneChanged(const QString &id)
+{
+	m_activeSceneCache.json = id;
+	m_activeSceneCache.age.start();
+	const QJsonObject scene = findScene(scenes(), id);
+	QJsonObject o;
+	// "scene" and "id" carry the same value (the panel reads either)
+	o.insert(QStringLiteral("scene"), id.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(id));
+	o.insert(QStringLiteral("id"), id.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(id));
+	o.insert(QStringLiteral("name"), scene.value(QLatin1String("name")).toString(id));
+	emitEvent(QStringLiteral("scene.changed"), o);
 }
 
 void HttpApiServer::onStatusChanged(int status)
@@ -509,6 +531,8 @@ HttpApiServer::Response HttpApiServer::routeApi(const Request &request, const QS
 	}
 	if (what == QLatin1String("trigger"))
 		return handleTrigger(request, rest);
+	if (what == QLatin1String("scenes"))
+		return handleScenes(request, rest);
 	if (what == QLatin1String("profiles")) {
 		if (rest.size() == 1 && m == "GET")
 			return handleProfiles();
@@ -588,6 +612,8 @@ QJsonObject HttpApiServer::stateJson() const
 	o.insert(QStringLiteral("fps"), m_fps);
 	o.insert(QStringLiteral("max_fps"), m_serialMaxFps);
 	o.insert(QStringLiteral("version"), QStringLiteral(VERSION_STR));
+	const QString scene = activeScene();
+	o.insert(QStringLiteral("scene"), scene.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(scene));
 	return o;
 }
 
@@ -827,6 +853,88 @@ HttpApiServer::Response HttpApiServer::handleGroups(const Request &request, cons
 }
 
 // ---------------------------------------------------------------------------
+// scenes (current profile)
+
+QJsonArray HttpApiServer::scenes() const
+{
+	if (m_scenesCache.age.isValid() && m_scenesCache.age.elapsed() < CacheMs)
+		return scenesFromJson(m_scenesCache.json);
+	return scenesFromJson(Settings::getCompositorScenesJson());
+}
+
+QString HttpApiServer::activeScene() const
+{
+	if (m_activeSceneCache.age.isValid() && m_activeSceneCache.age.elapsed() < CacheMs)
+		return m_activeSceneCache.json;
+	return Settings::getCompositorActiveScene();
+}
+
+HttpApiServer::Response HttpApiServer::handleScenes(const Request &request, const QStringList &parts)
+{
+	// parts: scenes[, {id}[, activate]]
+	const QByteArray &m = request.method;
+	const QJsonArray list = scenes();
+
+	if (parts.size() == 1) {
+		if (m == "GET")
+			return jsonResponse(200, list);
+		if (m != "PUT")
+			return errorResponse(405, QStringLiteral("method_not_allowed"), QStringLiteral("use GET or PUT"));
+		const QJsonDocument doc = QJsonDocument::fromJson(request.body);
+		if (!doc.isArray())
+			return errorResponse(400, QStringLiteral("invalid_json"), QStringLiteral("body must be a JSON array of scenes"));
+		const QJsonArray incoming = doc.array();
+		if (incoming.size() > MaxScenes)
+			return errorResponse(400, QStringLiteral("invalid_scene"), QStringLiteral("at most %1 scenes").arg(MaxScenes));
+		QSet<QString> ids;
+		for (const QJsonValue &v : incoming) {
+			if (!v.isObject())
+				return errorResponse(400, QStringLiteral("invalid_scene"), QStringLiteral("each scene must be an object"));
+			const QJsonObject s = v.toObject();
+			QString error;
+			if (!validateSceneShape(s, &error))
+				return errorResponse(400, QStringLiteral("invalid_scene"), error);
+			const QString id = s.value(QLatin1String("id")).toString();
+			if (ids.contains(id))
+				return errorResponse(409, QStringLiteral("id_exists"), QStringLiteral("duplicate scene id: ") + id);
+			ids.insert(id);
+			Response err;
+			if (!validateGroups(s.value(QLatin1String("groups")).toArray(), &err))
+				return err;
+		}
+		const QString json = compactJson(incoming);
+		m_scenesCache.json = json;
+		m_scenesCache.age.start();
+		emit scenesWriteRequested(json);
+		return jsonResponse(200, incoming);
+	}
+
+	const QJsonObject scene = findScene(list, parts[1]);
+	if (scene.isEmpty())
+		return errorResponse(404, QStringLiteral("scene_not_found"), QStringLiteral("no such scene"));
+
+	if (parts.size() == 2 && m == "GET")
+		return jsonResponse(200, scene);
+
+	if (parts.size() == 3 && parts[2] == QLatin1String("activate") && m == "POST") {
+		// answer with the new state right away; the GUI thread applies it (no capture restart)
+		const QJsonArray groups = scene.value(QLatin1String("groups")).toArray();
+		CachedGroups c;
+		c.json = groups.isEmpty() ? QString() : compactJson(groups);
+		c.age.start();
+		m_groupsCache.insert(Settings::getCurrentProfileName(), c);
+		m_activeSceneCache.json = parts[1];
+		m_activeSceneCache.age.start();
+		emit sceneActivateRequested(parts[1]);
+		QJsonObject o;
+		o.insert(QStringLiteral("scene"), parts[1]);
+		o.insert(QStringLiteral("name"), scene.value(QLatin1String("name")).toString(parts[1]));
+		return jsonResponse(200, o);
+	}
+	return errorResponse(405, QStringLiteral("method_not_allowed"), QStringLiteral("use GET /scenes/{id} or POST /scenes/{id}/activate"));
+}
+
+// ---------------------------------------------------------------------------
 // triggers
 
 bool HttpApiServer::allowTrigger()
@@ -844,6 +952,39 @@ HttpApiServer::Response HttpApiServer::doTrigger(QJsonObject trigger)
 		return errorResponse(429, QStringLiteral("rate_limited"), QStringLiteral("more than 30 triggers per second"));
 	if (trigger.value(QLatin1String("id")).toString().isEmpty())
 		trigger.insert(QStringLiteral("id"), QStringLiteral("api-%1").arg(++m_idCounter));
+
+	// who sent it ("claude", "whatsapp"...): filtered by the active scene's policy
+	const QJsonValue sourceValue = trigger.value(QLatin1String("source"));
+	if (!sourceValue.isUndefined() && !sourceValue.isNull()
+			&& (!sourceValue.isString() || sourceValue.toString().size() > MaxSourceLength))
+		return errorResponse(400, QStringLiteral("invalid_trigger"), QStringLiteral("source must be a string of up to %1 characters").arg(MaxSourceLength));
+	const QString source = sourceValue.toString().trimmed().toLower();
+	if (source.isEmpty())
+		trigger.remove(QStringLiteral("source"));
+	else
+		trigger.insert(QStringLiteral("source"), source);
+
+	const QString sceneId = activeScene();
+	const TriggerPolicy policy = triggerPolicy(findScene(scenes(), sceneId), source,
+		qBound(0, trigger.value(QLatin1String("priority")).toInt(50), 100));
+
+	QSet<QString> known;
+	for (const QJsonValue &g : groupsFor(Settings::getCurrentProfileName()))
+		known.insert(g.toObject().value(QLatin1String("id")).toString());
+
+	// no target: where the active scene puts notifications (its groups that exist now), else everything
+	if (!trigger.contains(QLatin1String("target"))) {
+		QJsonArray groups;
+		for (const QString &g : policy.targetGroups)
+			if (known.contains(g))
+				groups.append(g);
+		QJsonObject target;
+		if (groups.isEmpty())
+			target.insert(QStringLiteral("all"), true);
+		else
+			target.insert(QStringLiteral("groups"), groups);
+		trigger.insert(QStringLiteral("target"), target);
+	}
 	const QString json = compactJson(trigger);
 
 	QString error;
@@ -853,16 +994,25 @@ HttpApiServer::Response HttpApiServer::doTrigger(QJsonObject trigger)
 
 	const QJsonObject target = trigger.value(QLatin1String("target")).toObject();
 	if (target.contains(QLatin1String("groups"))) {
-		QSet<QString> known;
-		for (const QJsonValue &g : groupsFor(Settings::getCurrentProfileName()))
-			known.insert(g.toObject().value(QLatin1String("id")).toString());
 		for (const QJsonValue &g : target.value(QLatin1String("groups")).toArray())
 			if (!known.contains(g.toString()))
 				return errorResponse(400, QStringLiteral("unknown_group"), QStringLiteral("unknown group: ") + g.toString());
 	}
 
+	if (policy.suppressed) {
+		// accepted but kept quiet by the active scene (e.g. "midia" only lets urgent ones through)
+		QJsonObject o;
+		o.insert(QStringLiteral("suppressed"), true);
+		o.insert(QStringLiteral("reason"), policy.reason);
+		o.insert(QStringLiteral("scene"), sceneId);
+		o.insert(QStringLiteral("overlay_id"), QJsonValue::Null);
+		o.insert(QStringLiteral("expires_at_ms"), QJsonValue::Null);
+		return jsonResponse(202, o);
+	}
+
 	emit triggerRequested(json);
 	QJsonObject o;
+	o.insert(QStringLiteral("suppressed"), false);
 	o.insert(QStringLiteral("overlay_id"), trigger.value(QLatin1String("id")).toString());
 	if (durationMs > 0)
 		o.insert(QStringLiteral("expires_at_ms"), double(QDateTime::currentMSecsSinceEpoch() + durationMs));

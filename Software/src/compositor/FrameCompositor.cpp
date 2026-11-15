@@ -124,6 +124,8 @@ void FrameCompositor::publishOverlays()
 		j.insert(QStringLiteral("id"), o.id);
 		j.insert(QStringLiteral("priority"), o.priority);
 		j.insert(QStringLiteral("effect"), o.effectName);
+		if (!o.source.isEmpty())
+			j.insert(QStringLiteral("source"), o.source);
 		j.insert(QStringLiteral("started_at_ms"), double(o.startedEpochMs ? o.startedEpochMs : epochNow - (now - o.startMs)));
 		j.insert(QStringLiteral("duration_ms"), o.durationMs);
 		j.insert(QStringLiteral("removing"), o.removing || o.removeAtMs >= 0);
@@ -267,6 +269,7 @@ void FrameCompositor::triggerOverlay(const QString &json)
 	o.startMs = m_clock.elapsed();
 	o.startedEpochMs = QDateTime::currentMSecsSinceEpoch();
 	o.effectName = doc.object().value(QLatin1String("effect")).toObject().value(QLatin1String("type")).toString().toLower();
+	o.source = doc.object().value(QLatin1String("source")).toString();
 	resolveOverlay(o);
 
 	// same id = restart (e.g. a second WhatsApp message restarts the pulse instead of stacking);
@@ -376,7 +379,9 @@ void FrameCompositor::emitFrame()
 		const int g = m_ledGroup[i];
 		if (g < 0 || m_groups[g].mode.kind == Kind::Source) {
 			const QRgb c = m_source[i];
-			target[0] = qRed(c); target[1] = qGreen(c); target[2] = qBlue(c);
+			// a "source" group may dim the screen colors (e.g. monitor at 0.6 in a scene)
+			const float b = g < 0 ? 1.0f : m_groups[g].mode.brightness;
+			target[0] = qRed(c) * b; target[1] = qGreen(c) * b; target[2] = qBlue(c) * b;
 		} else {
 			const Rgba c = evaluate(m_groups[g].mode, double(now), m_ledPos[i]);
 			target[0] = c.r; target[1] = c.g; target[2] = c.b;

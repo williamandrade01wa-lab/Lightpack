@@ -110,6 +110,7 @@ private:
 		int fadeOutMs{ 0 };
 		qint64 removeAtMs{ -1 };   // set when removed explicitly (fade out from there)
 		QString effectName;
+		QString source;            // who sent it ("claude", "whatsapp"...), reported to the web panel
 		qint64 startedEpochMs{ 0 };
 		bool removing{ false };    // past its end, fading out (reported by overlaysChanged)
 		QVector<int> resolved;     // LED indices, built for the current LED count

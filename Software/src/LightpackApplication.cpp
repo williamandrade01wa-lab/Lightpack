@@ -42,6 +42,7 @@
 #endif
 
 #include "compositor/FrameCompositor.hpp"
+#include "compositor/Scenes.hpp"
 #ifdef WEBAPI_SUPPORT
 #include "web/HttpApiServer.hpp"
 #else
@@ -708,6 +709,8 @@ void LightpackApplication::startWebApiServer()
 	connect(m_webApiServer, &HttpApiServer::statusRequested, this, &LightpackApplication::webSetStatus, Qt::QueuedConnection);
 	connect(m_webApiServer, &HttpApiServer::brightnessRequested, this, &LightpackApplication::webSetBrightness, Qt::QueuedConnection);
 	connect(m_webApiServer, &HttpApiServer::groupsWriteRequested, this, &LightpackApplication::webSetGroups, Qt::QueuedConnection);
+	connect(m_webApiServer, &HttpApiServer::scenesWriteRequested, this, &LightpackApplication::webSetScenes, Qt::QueuedConnection);
+	connect(m_webApiServer, &HttpApiServer::sceneActivateRequested, this, &LightpackApplication::activateScene, Qt::QueuedConnection);
 
 	// triggers -> compositor
 	connect(m_webApiServer, &HttpApiServer::triggerRequested, m_frameCompositor, &FrameCompositor::triggerOverlay, Qt::QueuedConnection);
@@ -717,6 +720,7 @@ void LightpackApplication::startWebApiServer()
 	connect(m_frameCompositor, &FrameCompositor::frameReady, m_webApiServer, &HttpApiServer::onFrame, Qt::QueuedConnection);
 	connect(m_frameCompositor, &FrameCompositor::overlaysChanged, m_webApiServer, &HttpApiServer::onOverlaysChanged, Qt::QueuedConnection);
 	connect(settings(), &Settings::currentProfileInited, m_webApiServer, &HttpApiServer::onProfileChanged, Qt::QueuedConnection);
+	connect(settings(), &Settings::compositorActiveSceneChanged, m_webApiServer, &HttpApiServer::onSceneChanged, Qt::QueuedConnection);
 	connect(qApp, &QGuiApplication::screenAdded, this, [this]() { pushScreensToWebApi(); });
 	connect(qApp, &QGuiApplication::screenRemoved, this, [this]() { pushScreensToWebApi(); });
 	pushScreensToWebApi();
@@ -773,6 +777,34 @@ void LightpackApplication::webSetBrightness(int value)
 void LightpackApplication::webSetGroups(const QString &profile, const QString &json)
 {
 	Settings::setProfileCompositorGroupsJson(profile, json);
+}
+
+void LightpackApplication::webSetScenes(const QString &json)
+{
+	const QString activeId = Settings::getCompositorActiveScene();
+	const QJsonObject before = Compositor::findScene(Compositor::scenesFromJson(Settings::getCompositorScenesJson()), activeId);
+	Settings::setCompositorScenesJson(json);
+	if (activeId.isEmpty())
+		return;
+	const QJsonObject after = Compositor::findScene(Compositor::scenesFromJson(json), activeId);
+	if (after.isEmpty())
+		Settings::setCompositorActiveScene(QString()); // the active scene was deleted
+	else if (after.value(QLatin1String("groups")) != before.value(QLatin1String("groups")))
+		activateScene(activeId); // the active scene was edited: show the change now
+}
+
+void LightpackApplication::activateScene(const QString &id)
+{
+	const QJsonObject scene = Compositor::findScene(Compositor::scenesFromJson(Settings::getCompositorScenesJson()), id);
+	if (scene.isEmpty()) {
+		qWarning() << Q_FUNC_INFO << "no such scene:" << id;
+		return;
+	}
+	// only the groups change: the grabber keeps running, the compositor picks the new layout
+	const QJsonArray groups = scene.value(QLatin1String("groups")).toArray();
+	Settings::setCompositorGroupsJson(groups.isEmpty() ? QString()
+		: QString::fromUtf8(QJsonDocument(groups).toJson(QJsonDocument::Compact)));
+	Settings::setCompositorActiveScene(id);
 }
 
 void LightpackApplication::startLedDeviceManager()

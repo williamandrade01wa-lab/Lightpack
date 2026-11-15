@@ -683,5 +683,9 @@ Se uma janela em tela cheia estiver em foco num monitor capturado e nenhuma imag
         <source>Open &amp;web panel</source>
         <translation>Abrir painel &amp;web</translation>
     </message>
+    <message>
+        <source>&amp;Modes</source>
+        <translation>&amp;Modos</translation>
+    </message>
 </context>
 </TS>
