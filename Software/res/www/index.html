@@ -13,6 +13,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="inicio" aria-selected="true">Início</button>
     <button role="tab" data-tab="zonas">Zonas</button>
+    <button role="tab" data-tab="modos">Modos</button>
     <button role="tab" data-tab="gatilhos">Gatilhos</button>
   </nav>
   <div class="status">
@@ -41,6 +42,12 @@
 <main id="app" hidden>
   <!-- ============ INÍCIO (modo básico) ============ -->
   <section id="tab-inicio" class="screen">
+    <div class="card">
+      <h2>Modo</h2>
+      <p class="muted small">Um modo muda de uma vez o que cada parte da fita faz e quais avisos podem acender. Escolha um:</p>
+      <div id="modeBtns" class="modebtns"></div>
+      <p class="muted small" id="modeInfo"></p>
+    </div>
     <div class="grid2">
       <div class="card">
         <h2>Luzes</h2>
@@ -98,6 +105,29 @@
         <button id="selClear">Limpar</button>
         <button id="newGroup" class="primary">Criar grupo com os escolhidos</button>
       </div>
+      <div class="selbar" id="quickSel">
+        <span class="muted small">Escolher um lado:</span>
+        <button data-side="l">Monitor: esquerda</button>
+        <button data-side="t">Monitor: topo</button>
+        <button data-side="r">Monitor: direita</button>
+        <button data-side="b">Mesa toda</button>
+        <span id="deskSides"></span>
+      </div>
+      <div class="selbar" id="ledColor">
+        <b>Cor só dos escolhidos:</b>
+        <input type="color" id="lcColor" value="#ff9f40" aria-label="Cor">
+        <button id="lcApply" class="primary">Aplicar cor</button>
+        <button id="lcClear" title="Os LEDs escolhidos voltam a seguir o grupo ou o modo de antes">Tirar cor individual</button>
+        <span class="muted small">Cria um grupo pequeno só com eles (vale na hora).</span>
+      </div>
+    </div>
+
+    <div class="card" id="wizCard">
+      <div class="row"><h2>Achar o centro da mesa</h2><span class="spacer"></span>
+        <button id="wizStart" class="primary">Começar</button></div>
+      <p class="muted small">Descobre quais LEDs da mesa ficam sob o monitor e separa a mesa em esquerda, centro e direita
+        (grupos <code>desk-left</code>, <code>desk-center</code>, <code>desk-right</code>). Os números mostrados são os mesmos da janela do Prismatik (começam em 1).</p>
+      <div id="wiz" hidden></div>
     </div>
 
     <div class="card">
@@ -119,11 +149,36 @@
     </div>
   </section>
 
+  <!-- ============ MODOS (editor de cena) ============ -->
+  <section id="tab-modos" class="screen" hidden>
+    <div class="card">
+      <div class="row"><h2>Modos</h2><span class="spacer"></span>
+        <button id="scNew">Novo modo</button>
+        <button id="scDup">Duplicar</button>
+        <button id="scDel" class="danger">Apagar</button></div>
+      <p class="muted small">Escolha o modo que quer editar. O modo marcado com ● é o que está ligado agora.</p>
+      <div id="scTabs" class="modebtns small"></div>
+    </div>
+    <div id="scEditor"></div>
+    <div class="savebar" id="scBar" hidden>
+      <span id="scMsg">Há mudanças ainda não salvas.</span>
+      <span class="spacer"></span>
+      <button id="scDiscard">Descartar</button>
+      <button id="scSave" class="primary">Salvar modos</button>
+    </div>
+  </section>
+
   <!-- ============ GATILHOS ============ -->
   <section id="tab-gatilhos" class="screen" hidden>
     <div class="card">
+      <h2>Quem pode avisar agora</h2>
+      <p class="muted small" id="policyInfo"></p>
+      <button id="goModos" type="button">Editar nos Modos</button>
+    </div>
+    <div class="card">
       <h2>Efeitos tocando agora</h2>
       <p class="muted small">Gatilhos são efeitos temporários por cima do que está aceso. Apps (WhatsApp, Claude, scripts) usam isso para chamar sua atenção.</p>
+      <div class="chips" id="srcFilter" role="group" aria-label="Filtrar por origem"></div>
       <div id="overlays"></div>
       <button id="stopAll" class="danger">Parar todos</button>
     </div>
@@ -134,8 +189,13 @@
           <select id="tTarget">
             <option value="all">Fita toda</option>
             <option value="sel">LEDs escolhidos na aba Zonas</option>
+            <option value="scene">Onde o modo atual manda (sem alvo)</option>
           </select>
         </label>
+        <label class="field"><span><b>Origem</b></span>
+          <input type="text" id="tSource" list="srcList" maxlength="30" placeholder="(nenhuma)">
+          <datalist id="srcList"></datalist>
+          <small class="muted">Quem está avisando (ex.: claude). O modo atual pode silenciar origens que não estão na lista dele.</small></label>
         <label class="field"><span><b>Efeito</b></span>
           <select id="tType">
             <option value="pulse">Pulsar (acende e apaga suave)</option>
