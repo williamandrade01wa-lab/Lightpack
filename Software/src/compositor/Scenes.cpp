@@ -109,7 +109,7 @@ QJsonArray defaultScenes()
 	scenes.append(scene(QStringLiteral("trabalho"), QStringLiteral("Trabalho"),
 		deskGroups(solidMode(warm, 0.7), sourceMode(0.6)), triggers(0)));
 	// Midia: everything follows the screen; only urgent notifications
-	scenes.append(scene(QStringLiteral("midia"), QStringLiteral(u"Mídia"),
+	scenes.append(scene(QStringLiteral("midia"), QStringLiteral(u"M\u00eddia"),
 		deskGroups(sourceMode(), sourceMode()), triggers(90)));
 	// Foco: only the LEDs under the monitor follow the screen; dim static ends for notifications
 	scenes.append(scene(QStringLiteral("foco"), QStringLiteral("Foco"),
