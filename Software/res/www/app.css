@@ -114,3 +114,24 @@ summary { cursor: pointer; color: var(--accent); }
   background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; opacity: 0; pointer-events: none; transition: opacity .2s; }
 #toast.show { opacity: .95; }
 #toast.err { background: var(--danger); color: #fff; }
+
+/* modes (scenes) */
+.modebtns { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
+.modebtns button { flex: 1 1 150px; padding: 16px 14px; font-size: 17px; font-weight: 700; border-radius: 12px; border: 2px solid var(--line); }
+.modebtns.small button { flex: 0 1 auto; padding: 8px 14px; font-size: 14px; border-radius: 10px; }
+.modebtns button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+.modebtns button small { display: block; font-weight: 400; font-size: 12px; opacity: .8; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chips button { padding: 3px 10px; border-radius: 999px; font-size: 13px; }
+.chips button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0; }
+.sgroup { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* "find the center" wizard */
+.wiz .step { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 8px 0; }
+.wiz .step.dim { opacity: .55; }
+.wiz .nudge { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wiz .nudge output { min-width: 3.2em; text-align: center; font-weight: 700; font-size: 18px; }
+.wiz .nudge button { min-width: 44px; font-size: 16px; }
+.wiz .summary { display: flex; gap: 8px; flex-wrap: wrap; }
+.wiz .summary span { border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; font-size: 13px; }

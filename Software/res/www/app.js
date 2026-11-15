@@ -88,6 +88,8 @@
     unknown_group: "Esse grupo ainda não existe na fita. Aplique as mudanças na aba Zonas primeiro.",
     invalid_value: "Valor inválido.",
     invalid_json: "Pedido inválido.",
+    scene_not_found: "Esse modo não existe mais. Recarregue a página.",
+    invalid_scene: "Modo inválido. Confira o nome e as opções.",
   };
   class ApiError extends Error {
     constructor(status, code, message) { super(message); this.status = status; this.code = code; }
@@ -121,7 +123,10 @@
     sel: new Set(), last: null,
     overlays: [], frame: null,
     tab: "inicio", stages: {},
+    scenes: [], scenesSaved: "[]", scEdit: null, srcFilter: "*", wiz: null,
   };
+  const TABS = ["inicio", "zonas", "modos", "gatilhos"];
+  const KNOWN_SOURCES = ["claude", "chatgpt", "whatsapp", "sistema"];
   const PALETTE = ["#ff9f1c", "#2ec4b6", "#e71d36", "#a06cd5", "#3a86ff", "#8ac926", "#ff70a6", "#ffd60a", "#00b4d8", "#f15bb5"];
   const groupColor = (gi) => PALETTE[gi % PALETTE.length];
   const ledCount = () => (S.layout && S.layout.leds ? S.layout.leds.length : 0);
@@ -150,12 +155,14 @@
     if (!on) $("fps").textContent = "desconectado";
   }
   function selectTab(name) {
+    if (S.wiz && name !== "zonas") wizEnd();
     S.tab = name;
     local.set("prismatik.tab", name);
     for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === name));
-    for (const s of ["inicio", "zonas", "gatilhos"]) $("tab-" + s).hidden = s !== name;
+    for (const s of TABS) $("tab-" + s).hidden = s !== name;
     drawFrame();
-    if (name === "gatilhos") renderOverlays();
+    if (name === "gatilhos") { renderPolicy(); renderOverlays(); }
+    if (name === "modos") renderScenes();
   }
 
   // ---------------------------------------------------------------------------
@@ -173,6 +180,7 @@
     $("deviceInfo").textContent = [S.state.device, S.state.led_count ? S.state.led_count + " LEDs" : "", S.state.version ? "versão " + S.state.version : ""].filter(Boolean).join(" · ");
     $("groupsProfile").textContent = "“" + S.state.profile + "”";
     if (prevProfile && prevProfile !== S.state.profile) onProfileSwitchedSoon();
+    renderModeBtns();
   }
   function renderProfiles() {
     const sel = $("profile");
@@ -194,6 +202,7 @@
     }
     S.sel.clear();
     await loadGroups();
+    await loadScenes();
   }
   // the switch happens in the app a moment after the request: wait before reading layout/groups
   const onProfileSwitchedSoon = debounce(onProfileSwitched, 500);
@@ -209,8 +218,10 @@
     rainbow: { id: "painel-arcoiris", target: { all: true }, effect: { type: "rainbow", period_ms: 3000 }, duration_ms: 5000, priority: 70 },
   };
   async function trigger(t) {
-    try { await api("POST", "/trigger", t); }
-    catch (e) { toast(e.message, true); }
+    try {
+      const r = await api("POST", "/trigger", t);
+      if (r && r.suppressed) toast("O modo atual silenciou este aviso (origem fora da lista ou prioridade baixa demais).", true);
+    } catch (e) { toast(e.message, true); }
   }
   async function stopOverlay(id) {
     try { await api("DELETE", "/trigger/" + encodeURIComponent(id)); }
@@ -279,7 +290,7 @@
     };
     vb.w = Math.max(desk.x + desk.w, scr.x + scr.w + gap + r) + pad - vb.x;
     vb.h = desk.y + desk.h + pad - vb.y;
-    return { scr, desk, pos, r, vb };
+    return { scr, desk, pos, r, vb, side };
   }
 
   function buildStage(container, editable) {
@@ -287,6 +298,7 @@
     const g = computeGeometry();
     if (!g) { container.append(el("p", { class: "empty" }, "Nenhum LED configurado neste perfil.")); return null; }
     const { scr, desk, pos, r, vb } = g;
+    if (editable) S.sides = g.side;
     const svg = svgEl("svg", { viewBox: [vb.x, vb.y, vb.w, vb.h].map((v) => v.toFixed(1)).join(" "), role: "img",
       "aria-label": "Desenho do monitor e da mesa com os LEDs" });
     const fs = (scr.h * 0.05).toFixed(1);
@@ -502,6 +514,7 @@
     paintEditor();
     updateSaveBar();
     renderTargetOptions();
+    renderDeskSides();
   }
   function updateSaveBar() {
     const dirty = isDirty();
@@ -572,9 +585,10 @@
   const pct = (v) => Math.round(v) + "%";
   const secs = (v) => (v / 1000).toFixed(1).replace(".", ",") + " s";
 
-  function modeParams(g, gi) {
+  function modeParams(g, gi, apply) {
     const m = g.mode || { type: "source" };
-    const set = (patch) => mutate(() => { g.mode = Object.assign({}, g.mode, patch); });
+    const run = apply || mutate;
+    const set = (patch) => run(() => { g.mode = Object.assign({}, g.mode, patch); });
     const box = el("div", { class: "grid" });
     const bright = () => slider("Brilho do grupo", Math.round((m.brightness ?? 1) * 100), 0, 100, 1, pct, (v) => set({ brightness: v / 100 }));
     switch (m.type) {
@@ -605,6 +619,10 @@
         break;
       case "rainbow":
         box.append(slider("Velocidade (uma volta)", m.period_ms || 8000, 1000, 60000, 500, secs, (v) => set({ period_ms: v }), "Menor = mais rápido."), bright());
+        break;
+      case "source":
+      case "screen":
+        box.append(bright());
         break;
       default:
         break;
@@ -688,28 +706,443 @@
   }
 
   // ---------------------------------------------------------------------------
+  // individual colour: one LED / one side with its own colour = a small group ("cor-*"), never a permanent overlay
+  const ORIGIN_KEY = "prismatik.ledOrigin";
+  function readOrigins() {
+    const all = safe(() => JSON.parse(local.get(ORIGIN_KEY) || "{}"), {}) || {};
+    return all[S.groupsProfile || (S.state && S.state.profile) || ""] || {};
+  }
+  function writeOrigins(map) {
+    const all = safe(() => JSON.parse(local.get(ORIGIN_KEY) || "{}"), {}) || {};
+    all[S.groupsProfile || (S.state && S.state.profile) || ""] = map;
+    local.set(ORIGIN_KEY, JSON.stringify(all));
+  }
+  const isColorGroup = (g) => /^cor-/.test(g.id);
+  function selectByPredicate(fn) {
+    const out = new Set();
+    for (let i = 0; i < ledCount(); i++) if (fn(i)) out.add(i);
+    S.sel = out;
+    paintEditor();
+  }
+  function renderDeskSides() {
+    const box = $("deskSides");
+    if (!box) return;
+    box.textContent = "";
+    for (const [id, label] of [["desk-left", "Mesa: esquerda"], ["desk-center", "Mesa: centro"], ["desk-right", "Mesa: direita"]]) {
+      const gi = S.groups.findIndex((g) => g.id === id);
+      if (gi >= 0) box.append(el("button", { type: "button", onclick: () => selectGroup(gi, false) }, label));
+    }
+  }
+  async function applyLedColor() {
+    if (!S.sel.size) { toast("Escolha alguns LEDs no desenho primeiro.", true); return; }
+    const sel = [...S.sel].sort((a, b) => a - b);
+    const color = $("lcColor").value;
+    const origins = readOrigins();
+    const own = owners();
+    for (const i of sel) if (own[i] >= 0 && !isColorGroup(S.groups[own[i]])) origins[i] = S.groups[own[i]].id;
+    writeOrigins(origins);
+    const text = rangesText(sel, 2);
+    mutate(() => {
+      const notes = takeFromOthers(sel, null);
+      const id = uniqueId("cor-" + (sel[0] + 1) + (sel.length > 1 ? "-" + (sel[sel.length - 1] + 1) : ""));
+      S.groups.push({ id, name: (sel.length === 1 ? "Cor do LED " : "Cor dos LEDs ") + text, leds: { ranges: toRanges(sel) }, mode: { type: "solid", color, brightness: 1 } });
+      return notes;
+    });
+    await saveGroups();
+  }
+  async function clearLedColor() {
+    const own = owners();
+    const hit = [...S.sel].filter((i) => own[i] >= 0 && isColorGroup(S.groups[own[i]]));
+    if (!hit.length) { toast("Nenhum dos LEDs escolhidos tem cor individual.", true); return; }
+    const origins = readOrigins();
+    mutate(() => {
+      const back = new Set(hit);
+      const home = {};
+      for (const i of hit) { const id = origins[i]; if (id && S.groups.some((g) => g.id === id)) (home[id] = home[id] || []).push(i); }
+      S.groups = S.groups.filter((g) => {
+        if (!isColorGroup(g)) return true;
+        const keep = groupIndices(g).filter((i) => !back.has(i));
+        if (!keep.length) return false;
+        setGroupIndices(g, keep);
+        return true;
+      });
+      for (const id in home) { const g = S.groups.find((x) => x.id === id); setGroupIndices(g, groupIndices(g).concat(home[id])); }
+      for (const i of hit) delete origins[i];
+      writeOrigins(origins);
+    });
+    await saveGroups();
+  }
+
+  // ---------------------------------------------------------------------------
+  // "Achar o centro" wizard (desk strip -> desk-left / desk-center / desk-right)
+  // indices are 0-based inside, shown 1-based (like the Prismatik window)
+  const WIZ_FLASH = "painel-centro", WIZ_BAND = "painel-centro-faixa";
+  function wizStart() {
+    const n = ledCount();
+    if (n < 4) { toast("Este perfil não tem LEDs suficientes.", true); return; }
+    const idxOf = (id) => { const g = S.groups.find((x) => x.id === id); return g ? groupIndices(g).sort((a, b) => a - b) : []; };
+    const c = idxOf("desk-center"), l = idxOf("desk-left"), r = idxOf("desk-right");
+    // calibrated on 2026-11-14: desk 71-158 (left = lower number), centre under the monitor 98-131
+    const w = { step: 0, D0: 71, D1: Math.min(158, n - 1), L: 98, R: 131 };
+    if (l.length) w.D0 = l[0];
+    if (r.length) w.D1 = r[r.length - 1];
+    if (c.length) { w.L = c[0]; w.R = c[c.length - 1]; }
+    w.D1 = clamp(w.D1, 2, n - 1);
+    w.D0 = clamp(w.D0, 0, w.D1 - 2);
+    w.L = clamp(w.L, w.D0 + 1, w.D1 - 1);
+    w.R = clamp(w.R, w.L, w.D1 - 1);
+    S.wiz = w;
+    $("wizStart").hidden = true;
+    wizRender();
+  }
+  const wizFlash = debounce(() => {
+    const w = S.wiz;
+    if (!w) return;
+    const base = { effect: { type: "flash", color: "#ffffff", period_ms: 500, count: 0 }, duration_ms: 180000, priority: 95, blend: "override" };
+    if (w.step === 2) trigger(Object.assign({ id: WIZ_FLASH, target: { leds: { ranges: [[w.L, w.L]] } } }, base));
+    else if (w.step === 3) trigger(Object.assign({ id: WIZ_FLASH, target: { leds: { ranges: [[w.R, w.R]] } } }, base));
+    else if (w.step === 4) trigger(Object.assign({ id: WIZ_FLASH, target: { leds: { ranges: [[w.L, w.L], [w.R, w.R]] } } }, base));
+    if (w.step >= 2) trigger({ id: WIZ_BAND, target: { leds: { ranges: [[w.L, w.R]] } }, effect: { type: "solid", color: "#2a7bff" }, duration_ms: 180000, priority: 80, blend: "alpha" });
+  }, 300);
+  async function wizStop() {
+    for (const id of [WIZ_FLASH, WIZ_BAND]) { try { await api("DELETE", "/trigger/" + encodeURIComponent(id)); } catch (e) { /* already gone */ } }
+    setTimeout(loadOverlays, 400);
+  }
+  function wizEnd() {
+    S.wiz = null;
+    $("wiz").hidden = true;
+    $("wiz").textContent = "";
+    $("wizStart").hidden = false;
+    wizStop();
+  }
+  function wizGo(step) { S.wiz.step = step; wizRender(); }
+  function nudge(label, key, lo, hi) {
+    const w = S.wiz;
+    const move = (d) => { w[key] = clamp(w[key] + d, lo(), hi()); wizRender(); };
+    return el("div", { class: "nudge" }, el("b", {}, label),
+      el("button", { type: "button", title: "5 LEDs para a esquerda", onclick: () => move(-5) }, "◀◀"),
+      el("button", { type: "button", title: "1 LED para a esquerda", onclick: () => move(-1) }, "◀"),
+      el("output", {}, String(w[key] + 1)),
+      el("button", { type: "button", title: "1 LED para a direita", onclick: () => move(1) }, "▶"),
+      el("button", { type: "button", title: "5 LEDs para a direita", onclick: () => move(5) }, "▶▶"),
+      el("button", { type: "button", onclick: () => wizFlash() }, "Piscar de novo"));
+  }
+  function wizRender() {
+    const w = S.wiz, box = $("wiz");
+    if (!w) return;
+    box.hidden = false;
+    box.className = "wiz";
+    box.textContent = "";
+    const n = ledCount();
+    const num = (label, key, hint) => {
+      const input = el("input", { type: "number", min: 1, max: n, value: w[key] + 1 });
+      input.addEventListener("change", () => {
+        w[key] = clamp((Math.round(+input.value) || 1) - 1, 0, n - 1);
+        w.D1 = clamp(w.D1, 2, n - 1);
+        w.D0 = clamp(w.D0, 0, w.D1 - 2);
+        w.L = clamp(w.L, w.D0 + 1, w.D1 - 1);
+        w.R = clamp(w.R, w.L, w.D1 - 1);
+        wizRender();
+      });
+      return el("label", { class: "field" }, el("span", {}, el("b", {}, label)), input, el("small", { class: "muted" }, hint));
+    };
+    const nav = (back, next) => el("div", { class: "row" },
+      back !== null ? el("button", { type: "button", onclick: () => wizGo(back) }, "Voltar") : null,
+      next !== null ? el("button", { type: "button", class: "primary", onclick: () => wizGo(next) }, "Próximo") : null,
+      el("span", { class: "spacer" }),
+      el("button", { type: "button", class: "danger", onclick: wizEnd }, "Cancelar"));
+    if (w.step === 0 || w.step === 1) {
+      box.append(el("div", { class: "step" },
+        el("p", {}, el("b", {}, "1 de 4 · A mesa"), " — onde a fita da mesa começa e termina. Já vem com o valor medido; só mude se a fita mudou."),
+        el("div", { class: "grid2" },
+          num("Primeiro LED da mesa (esquerda)", "D0", "Número menor = esquerda."),
+          num("Último LED da mesa (direita)", "D1", "Número maior = direita.")),
+        nav(null, 2)));
+    } else if (w.step === 2 || w.step === 3) {
+      const left = w.step === 2;
+      const key = left ? "L" : "R";
+      const lo = () => (left ? w.D0 + 1 : w.L), hi = () => (left ? w.R : w.D1 - 1);
+      box.append(el("div", { class: "step" },
+        el("p", {}, el("b", {}, (left ? "2" : "3") + " de 4 · Borda " + (left ? "esquerda" : "direita")),
+          " — um LED está piscando em branco na fita (o resto do centro fica azul fixo). Mexa até o branco ficar exatamente na " +
+          (left ? "borda esquerda" : "borda direita") + " do monitor."),
+        nudge(left ? "Primeiro LED do centro:" : "Último LED do centro:", key, lo, hi),
+        nav(left ? 1 : 2, left ? 3 : 4)));
+      wizFlash();
+    } else if (w.step === 4) {
+      box.append(el("div", { class: "step" },
+        el("p", {}, el("b", {}, "4 de 4 · Conferir e gravar"), " — os dois LEDs das bordas piscam. Se estiver certo, grave."),
+        el("div", { class: "summary" },
+          el("span", {}, "Esquerda: " + (w.D0 + 1) + "–" + w.L + " (" + (w.L - w.D0) + " LEDs)"),
+          el("span", {}, "Centro: " + (w.L + 1) + "–" + (w.R + 1) + " (" + (w.R - w.L + 1) + " LEDs)"),
+          el("span", {}, "Direita: " + (w.R + 2) + "–" + (w.D1 + 1) + " (" + (w.D1 - w.R) + " LEDs)")),
+        el("p", { class: "muted small" }, "Grava os grupos desk-left, desk-center e desk-right e aplica na fita. LEDs que estavam em outros grupos saem deles."),
+        el("div", { class: "row" },
+          el("button", { type: "button", onclick: () => wizGo(3) }, "Voltar"),
+          el("button", { type: "button", class: "primary", onclick: wizSave }, "Gravar os 3 grupos"),
+          el("span", { class: "spacer" }),
+          el("button", { type: "button", class: "danger", onclick: wizEnd }, "Cancelar"))));
+      wizFlash();
+    }
+  }
+  async function wizSave() {
+    const w = S.wiz;
+    if (!w) return;
+    const parts = [["desk-left", "Mesa: esquerda", w.D0, w.L - 1, "solid"], ["desk-center", "Mesa: centro", w.L, w.R, "source"], ["desk-right", "Mesa: direita", w.R + 1, w.D1, "solid"]];
+    const existing = {};
+    for (const [id] of parts) existing[id] = S.groups.find((g) => g.id === id) || null;
+    mutate(() => {
+      const notes = [];
+      for (const [id, name, a, b, type] of parts) {
+        const idx = [];
+        for (let i = a; i <= b; i++) idx.push(i);
+        let g = existing[id];
+        notes.push(...takeFromOthers(idx, g));
+        if (g && !S.groups.includes(g)) S.groups.push(g);
+        if (g) setGroupIndices(g, idx);
+        else {
+          g = { id, name, leds: { ranges: toRanges(idx) }, mode: type === "source" ? { type: "source" } : { type: "solid", color: "#ff9f40", brightness: 1 } };
+          S.groups.push(g);
+        }
+      }
+      return notes;
+    });
+    await saveGroups();
+    if (!isDirty()) { wizEnd(); toast("Centro gravado: desk-left, desk-center e desk-right já estão na fita."); }
+  }
+
+  // ---------------------------------------------------------------------------
+  // modes (scenes). Saved in the profile; the app applies a scene without restarting the capture.
+  const sceneIdOf = (v) => (v && typeof v === "object" ? v.id : v) || "";
+  const savedScenes = () => safe(() => JSON.parse(S.scenesSaved), []);
+  const scenesDirty = () => JSON.stringify(S.scenes) !== S.scenesSaved;
+  const activeSceneId = () => sceneIdOf(S.state && S.state.scene);
+  const trigOf = (sc) => {
+    const t = sc.triggers = sc.triggers || {};
+    t.allow = Array.isArray(t.allow) ? t.allow : [];
+    t.target_groups = Array.isArray(t.target_groups) ? t.target_groups : [];
+    t.min_priority = +t.min_priority || 0;
+    return t;
+  };
+  async function loadScenes() {
+    try {
+      const r = await api("GET", "/scenes");
+      S.scenes = Array.isArray(r) ? r : (r && r.scenes) || [];
+      if (r && !Array.isArray(r) && r.active && S.state) S.state.scene = r.active;
+    } catch (e) {
+      S.scenes = [];
+      if (e.status !== 401 && e.status !== 404) toast(e.message, true);
+    }
+    S.scenes.forEach(trigOf);
+    S.scenesSaved = JSON.stringify(S.scenes);
+    if (!S.scenes.some((s) => s.id === S.scEdit)) S.scEdit = (S.scenes.find((s) => s.id === activeSceneId()) || S.scenes[0] || {}).id || null;
+    renderModeBtns();
+    renderScenes();
+    renderPolicy();
+  }
+  function renderModeBtns() {
+    const box = $("modeBtns");
+    if (!box) return;
+    box.textContent = "";
+    const list = savedScenes();
+    const cur = activeSceneId();
+    if (!list.length) {
+      box.append(el("p", { class: "empty" }, "Os modos ainda não aparecem aqui (versão do Prismatik sem modos, ou nenhum criado)."));
+      $("modeInfo").textContent = "";
+      return;
+    }
+    for (const sc of list) {
+      box.append(el("button", { type: "button", "aria-pressed": String(sc.id === cur), onclick: () => activateScene(sc.id) }, sc.name || sc.id));
+    }
+    const a = list.find((s) => s.id === cur);
+    $("modeInfo").textContent = a ? "Ligado agora: " + (a.name || a.id) + ". " + policyText(a) : "Nenhum modo ligado ainda. Escolha um acima.";
+  }
+  function policyText(sc) {
+    const t = trigOf(JSON.parse(JSON.stringify(sc)));
+    const who = t.allow.length ? "Podem avisar: " + t.allow.join(", ") : "Nenhuma origem pode avisar";
+    const prio = t.min_priority > 0 ? "; só prioridade " + t.min_priority + " ou mais" : "";
+    const where = t.target_groups.length ? "; avisos sem alvo acendem em " + t.target_groups.join(", ") : "";
+    return who + prio + where + ".";
+  }
+  async function activateScene(id) {
+    if (id === activeSceneId() && !isDirty()) return;
+    if (isDirty() && !confirm("Há mudanças de zonas não aplicadas. Trocar de modo vai descartá-las. Continuar?")) return;
+    const sc = savedScenes().find((s) => s.id === id);
+    try {
+      await api("POST", "/scenes/" + encodeURIComponent(id) + "/activate");
+      applyState({ scene: id });
+      toast("Modo “" + ((sc && sc.name) || id) + "” ligado.");
+      renderScenes(); renderPolicy();
+      await loadGroups();
+    } catch (e) { toast(e.message, true); }
+  }
+  const curScene = () => S.scenes.find((s) => s.id === S.scEdit) || null;
+  function scMutate(fn) { fn(); renderScenes(); }
+  function updateSceneBar() {
+    const dirty = scenesDirty();
+    $("scBar").hidden = !dirty;
+    $("scSave").disabled = !dirty;
+  }
+  function renderScenes() {
+    const tabs = $("scTabs"), ed = $("scEditor");
+    if (!tabs) return;
+    tabs.textContent = "";
+    ed.textContent = "";
+    const cur = activeSceneId();
+    for (const sc of S.scenes) tabs.append(el("button", { type: "button", "aria-pressed": String(sc.id === S.scEdit), onclick: () => { S.scEdit = sc.id; renderScenes(); } }, (sc.id === cur ? "● " : "") + (sc.name || sc.id)));
+    if (!S.scenes.length) tabs.append(el("p", { class: "empty" }, "Nenhum modo. Clique em “Novo modo” para criar um a partir das zonas atuais."));
+    $("scDup").disabled = $("scDel").disabled = !curScene();
+    updateSceneBar();
+    const sc = curScene();
+    if (!sc) return;
+    const t = trigOf(sc);
+    const nameInput = el("input", { type: "text", value: sc.name || "", maxlength: 40 });
+    nameInput.addEventListener("change", () => { const v = nameInput.value.trim(); if (!v) { nameInput.value = sc.name || ""; return; } sc.name = v; renderScenes(); });
+    ed.append(el("div", { class: "card" },
+      el("div", { class: "row" }, el("h2", {}, "Modo “" + (sc.name || sc.id) + "”"), el("span", { class: "spacer" }),
+        el("button", { type: "button", class: "primary", onclick: () => { if (scenesDirty()) toast("Salve as mudanças antes de ligar o modo.", true); else activateScene(sc.id); } }, sc.id === cur ? "Ligado ✓" : "Ligar este modo")),
+      el("label", { class: "field" }, el("span", {}, el("b", {}, "Nome")), nameInput, el("small", { class: "muted" }, "Código: ", el("code", {}, sc.id)))));
+
+    // what each group does in this mode
+    const gcard = el("div", { class: "card" }, el("h2", {}, "O que cada parte da fita faz neste modo"),
+      el("p", { class: "muted small" }, "Cada grupo pode seguir a tela, ficar numa cor, apagar… Os LEDs de cada grupo vêm das zonas (aba Zonas); aqui você escolhe só o jeito de acender."));
+    if (!sc.groups || !sc.groups.length) gcard.append(el("p", { class: "empty" }, "Este modo ainda não tem grupos. Use “Copiar as zonas atuais”."));
+    (sc.groups || []).forEach((g, gi) => {
+      const idx = groupIndices(g);
+      const key = sc.id + "/" + g.id;
+      const open = S.scOpen === key;
+      const head = el("header", { onclick: () => { S.scOpen = open ? null : key; renderScenes(); } },
+        el("span", { class: "chip", style: "background:" + groupColor(gi) }),
+        el("span", { class: "name" }, nameOf(g)),
+        el("span", { class: "meta" }, (idx.length ? rangesText(idx, 3) : "sem LEDs") + " · " + modeLabel((g.mode || {}).type)),
+        el("span", { class: "spacer" }),
+        el("span", { class: "muted small" }, open ? "▲ fechar" : "▼ editar"));
+      const card = el("div", { class: "group" }, head);
+      if (open) {
+        const modeSel = el("select", {});
+        for (const [v, label] of MODES) modeSel.append(el("option", { value: v }, label));
+        const ty = (g.mode || {}).type || "source";
+        modeSel.value = ty === "screen" ? "source" : ty;
+        modeSel.addEventListener("change", () => scMutate(() => { g.mode = defaultMode(modeSel.value, g.mode, gi); }));
+        card.append(el("div", { class: "body" },
+          el("div", { class: "grid" }, el("label", { class: "field" }, el("span", {}, el("b", {}, "Como acende")), modeSel,
+            el("small", { class: "muted" }, (MODES.find((x) => x[0] === modeSel.value) || [])[2] || ""))),
+          modeParams(g, gi, scMutate),
+          el("div", { class: "actions" }, el("span", { class: "spacer" }),
+            el("button", { type: "button", class: "danger", onclick: () => scMutate(() => { sc.groups.splice(gi, 1); t.target_groups = t.target_groups.filter((x) => x !== g.id); }) }, "Tirar do modo"))));
+      }
+      gcard.append(card);
+    });
+    gcard.append(el("div", { class: "actions row" },
+      el("button", { type: "button", title: "Troca os grupos deste modo pelos que estão no perfil agora (aba Zonas, já aplicados)",
+        onclick: () => { if (!confirm("Trocar os grupos deste modo pelas zonas atuais do perfil?")) return; scMutate(() => { sc.groups = JSON.parse(S.saved); t.target_groups = t.target_groups.filter((x) => sc.groups.some((g) => g.id === x)); }); } }, "Copiar as zonas atuais")));
+    ed.append(gcard);
+
+    // which sources may notify
+    const srcs = [...new Set([...KNOWN_SOURCES, ...t.allow])];
+    const allowBox = el("div", { class: "checks" });
+    for (const s of srcs) {
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = t.allow.includes(s);
+      cb.addEventListener("change", () => { t.allow = cb.checked ? t.allow.concat([s]) : t.allow.filter((x) => x !== s); updateSceneBar(); });
+      allowBox.append(el("label", { class: "chk" }, cb, s));
+    }
+    const addSrc = el("input", { type: "text", maxlength: 30, placeholder: "outra origem (ex.: meu-script)" });
+    const addIt = () => { const v = addSrc.value.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-"); if (!v) return; if (!t.allow.includes(v)) t.allow.push(v); renderScenes(); };
+    addSrc.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addIt(); } });
+    const tgBox = el("div", { class: "checks" });
+    for (const g of sc.groups || []) {
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = t.target_groups.includes(g.id);
+      cb.addEventListener("change", () => { t.target_groups = cb.checked ? t.target_groups.concat([g.id]) : t.target_groups.filter((x) => x !== g.id); updateSceneBar(); });
+      tgBox.append(el("label", { class: "chk" }, cb, nameOf(g)));
+    }
+    ed.append(el("div", { class: "card" }, el("h2", {}, "Quais origens avisam neste modo"),
+      el("p", { class: "muted small" }, "Só as origens marcadas acendem a fita neste modo. As outras são silenciadas (o app que avisou não vê erro)."),
+      allowBox,
+      el("div", { class: "row" }, addSrc, el("button", { type: "button", onclick: addIt }, "Adicionar origem")),
+      slider("Prioridade mínima", t.min_priority, 0, 100, 1, (v) => String(v), (v) => { t.min_priority = v; updateSceneBar(); }, "Avisos com prioridade menor que isso são silenciados. 0 = todos passam; 90 = só os urgentes."),
+      el("div", { class: "field" }, el("span", {}, el("b", {}, "Onde os avisos acendem")), tgBox,
+        el("small", { class: "muted" }, "Vale para avisos que não dizem onde acender. Nenhum marcado = como o Prismatik decidir."))));
+  }
+  function newSceneId(name) {
+    const ids = new Set(S.scenes.map((s) => s.id));
+    const base = slug(name);
+    if (!ids.has(base)) return base;
+    for (let k = 2; ; k++) if (!ids.has(base + "-" + k)) return base + "-" + k;
+  }
+  function addScene(src, name) {
+    const sc = src ? JSON.parse(JSON.stringify(src)) : { groups: JSON.parse(S.saved), triggers: { allow: KNOWN_SOURCES.slice(), min_priority: 0, target_groups: [] } };
+    sc.name = name;
+    sc.id = newSceneId(name);
+    S.scenes.push(sc);
+    S.scEdit = sc.id;
+    renderScenes();
+  }
+  async function saveScenes() {
+    for (const sc of S.scenes) if (!(sc.name || "").trim()) { toast("Todo modo precisa de nome.", true); return; }
+    $("scSave").disabled = true;
+    try {
+      const r = await api("PUT", "/scenes", S.scenes);
+      if (Array.isArray(r)) S.scenes = r;
+      else if (r && Array.isArray(r.scenes)) S.scenes = r.scenes;
+      S.scenes.forEach(trigOf);
+      S.scenesSaved = JSON.stringify(S.scenes);
+      renderScenes(); renderModeBtns(); renderPolicy();
+      toast("Modos salvos no perfil.");
+    } catch (e) { toast(e.message, true); updateSceneBar(); }
+  }
+
+  // ---------------------------------------------------------------------------
   // triggers
   async function loadOverlays() {
     try {
       const o = await api("GET", "/overlays");
       S.overlays = Array.isArray(o) ? o : [];
     } catch (e) { S.overlays = []; }
+    renderPolicy();
     renderOverlays();
   }
   const loadOverlaysSoon = debounce(loadOverlays, 250);
   const EFFECT_PT = { pulse: "pulsar", flash: "piscar", wave: "onda", breathe: "respirar", rainbow: "arco-íris", solid: "cor fixa", gradient: "degradê" };
+  const srcKey = (o) => String(o.source || "");
+  function allowedSources() {
+    const sc = savedScenes().find((x) => x.id === activeSceneId());
+    return sc ? trigOf(JSON.parse(JSON.stringify(sc))).allow : null;
+  }
+  function renderPolicy() {
+    const info = $("policyInfo");
+    if (!info) return;
+    const sc = savedScenes().find((x) => x.id === activeSceneId());
+    info.textContent = sc ? "Modo “" + (sc.name || sc.id) + "”. " + policyText(sc) : "Nenhum modo ligado: todos os avisos acendem normalmente.";
+    const allow = allowedSources();
+    const seen = new Set([...KNOWN_SOURCES, ...(allow || []), ...S.overlays.map(srcKey).filter(Boolean)]);
+    const dl = $("srcList");
+    dl.textContent = "";
+    for (const s of seen) dl.append(el("option", { value: s }));
+    const box = $("srcFilter");
+    box.textContent = "";
+    const chip = (key, label, title) => box.append(el("button", { type: "button", title, "aria-pressed": String(S.srcFilter === key),
+      onclick: () => { S.srcFilter = key; renderPolicy(); renderOverlays(); } }, label));
+    chip("*", "Todas");
+    for (const s of seen) chip(s, s + (allow && !allow.includes(s) ? " (silenciada)" : ""), allow && !allow.includes(s) ? "Silenciada pelo modo atual" : "Pode avisar no modo atual");
+    chip("-", "sem origem");
+  }
   function renderOverlays() {
     const box = $("overlays");
     box.textContent = "";
     if (!S.overlays.length) { box.append(el("p", { class: "empty" }, "Nenhum efeito tocando agora.")); $("stopAll").disabled = true; return; }
     $("stopAll").disabled = false;
     const now = Date.now();
-    for (const o of S.overlays) {
+    const shown = S.overlays.filter((o) => S.srcFilter === "*" || (S.srcFilter === "-" ? !srcKey(o) : srcKey(o) === S.srcFilter));
+    if (!shown.length) box.append(el("p", { class: "empty" }, "Nenhum efeito dessa origem tocando agora."));
+    for (const o of shown) {
       let when = "até alguém parar";
       if (o.removing) when = "terminando…";
       else if (o.duration_ms > 0) when = "termina em " + Math.max(0, Math.ceil((o.started_at_ms + o.duration_ms - now) / 1000)) + " s";
       box.append(el("div", { class: "ov" },
         el("b", {}, o.id),
+        o.source ? el("span", { class: "chip-src muted small" }, "[" + o.source + "]") : null,
         el("span", {}, EFFECT_PT[o.effect] || o.effect || ""),
         el("span", { class: "muted small" }, "prioridade " + o.priority + " · " + when),
         el("span", { class: "spacer" }),
@@ -719,7 +1152,7 @@
   function renderTargetOptions() {
     const sel = $("tTarget");
     const keep = sel.value;
-    while (sel.options.length > 2) sel.remove(2);
+    while (sel.options.length > 3) sel.remove(3);
     for (const g of JSON.parse(S.saved)) sel.append(el("option", { value: "g:" + g.id }, "Grupo: " + nameOf(g)));
     if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
   }
@@ -727,7 +1160,10 @@
     const type = $("tType").value;
     const t = { id: $("tId").value.trim() || "teste-painel", effect: { type }, priority: +$("tPrio").value, blend: $("tBlend").value };
     const target = $("tTarget").value;
+    const src = $("tSource").value.trim().toLowerCase();
+    if (src) t.source = src;
     if (target === "all") t.target = { all: true };
+    else if (target === "scene") { /* no target: the active mode decides where it lights */ }
     else if (target === "sel") t.target = { leds: { ranges: toRanges([...S.sel]) } };
     else t.target = { groups: [target.slice(2)] };
     if (type !== "rainbow") t.effect.color = $("tColor").value;
@@ -803,6 +1239,12 @@
   function onEvent(name, data) {
     if (name === "overlay.started" || name === "overlay.ended") loadOverlaysSoon();
     else if (name === "status.changed") applyState({ on: !!data.on });
+    else if (name === "scene.changed") {
+      const id = sceneIdOf(data.scene || data.id || data.active);
+      if (id) applyState({ scene: id });
+      if (!isDirty()) loadGroups();
+      if (!scenesDirty()) loadScenes(); else { renderModeBtns(); renderScenes(); renderPolicy(); }
+    }
     else if (name === "profile.changed" && data.profile) { applyState({ profile: data.profile }); onProfileSwitchedSoon(); }
   }
 
@@ -816,6 +1258,7 @@
     applyState(state);
     buildStages();
     await loadGroups();
+    await loadScenes();
     await loadOverlays();
   }
   let bootTimer = 0;
@@ -890,6 +1333,25 @@
       else if (ev.key === "Escape") { S.sel.clear(); paintEditor(); }
     });
     $("stopAll").addEventListener("click", () => stopOverlay("*"));
+    $("goModos").addEventListener("click", () => selectTab("modos"));
+    for (const b of document.querySelectorAll("[data-side]")) b.addEventListener("click", () => selectByPredicate((i) => (S.sides || [])[i] === b.dataset.side));
+    $("lcApply").addEventListener("click", applyLedColor);
+    $("lcClear").addEventListener("click", clearLedColor);
+    $("wizStart").addEventListener("click", wizStart);
+    $("scNew").addEventListener("click", () => {
+      const name = (prompt("Nome do novo modo:", "Novo modo") || "").trim();
+      if (name) addScene(null, name.slice(0, 40));
+    });
+    $("scDup").addEventListener("click", () => { const sc = curScene(); if (sc) addScene(sc, (sc.name + " (cópia)").slice(0, 40)); });
+    $("scDel").addEventListener("click", () => {
+      const sc = curScene();
+      if (!sc || !confirm("Apagar o modo “" + (sc.name || sc.id) + "”?")) return;
+      S.scenes = S.scenes.filter((x) => x !== sc);
+      S.scEdit = (S.scenes[0] || {}).id || null;
+      renderScenes();
+    });
+    $("scSave").addEventListener("click", saveScenes);
+    $("scDiscard").addEventListener("click", () => { S.scenes = JSON.parse(S.scenesSaved); if (!S.scenes.some((x) => x.id === S.scEdit)) S.scEdit = (S.scenes[0] || {}).id || null; renderScenes(); });
     $("trigForm").addEventListener("submit", (ev) => {
       ev.preventDefault();
       if ($("tTarget").value === "sel" && !S.sel.size) { toast("Escolha LEDs na aba Zonas primeiro.", true); return; }
@@ -898,7 +1360,7 @@
     });
     $("trigForm").addEventListener("input", updateTriggerForm);
     $("trigForm").addEventListener("change", updateTriggerForm);
-    window.addEventListener("beforeunload", (ev) => { if (isDirty()) { ev.preventDefault(); ev.returnValue = ""; } });
+    window.addEventListener("beforeunload", (ev) => { if (isDirty() || scenesDirty()) { ev.preventDefault(); ev.returnValue = ""; } });
     window.addEventListener("hashchange", () => { if (/(?:^#|&)t=/.test(location.hash)) boot(); });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && TOKEN && S.state) api("GET", "/state").then(applyState).catch(() => {});
@@ -919,6 +1381,6 @@
   wireUi();
   updateTriggerForm();
   const savedTab = local.get("prismatik.tab");
-  selectTab(["inicio", "zonas", "gatilhos"].includes(savedTab) ? savedTab : "inicio");
+  selectTab(TABS.includes(savedTab) ? savedTab : "inicio");
   boot();
 })();
