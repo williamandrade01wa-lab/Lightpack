@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Prismatik Avisos</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 16px; min-width: 340px; max-width: 520px; color: #222; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  label { display: block; margin: 10px 0 4px; font-weight: 600; }
+  input[type=password], input[type=text], input[type=number] { width: 100%; box-sizing: border-box; padding: 6px; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  button { padding: 6px 12px; cursor: pointer; }
+  .sites label { display: inline-flex; gap: 6px; align-items: center; margin: 4px 12px 4px 0; font-weight: 400; }
+  #msg { margin-top: 12px; min-height: 1.3em; }
+  .ok { color: #137333; } .erro { color: #b3261e; }
+</style>
+</head>
+<body>
+<h1>Prismatik Avisos</h1>
+
+<label for="token">Token da API web</label>
+<input id="token" type="password" autocomplete="off" placeholder="Cole o token do Prismatik (aba API)">
+
+<label for="port">Porta</label>
+<input id="port" type="number" min="1" max="65535" value="3637">
+
+<label>Avisar em</label>
+<div class="sites">
+  <label><input type="checkbox" id="en-claude"> Claude.ai</label>
+  <label><input type="checkbox" id="en-chatgpt"> ChatGPT</label>
+  <label><input type="checkbox" id="en-whatsapp"> WhatsApp Web</label>
+</div>
+
+<div class="row">
+  <button id="save">Salvar</button>
+  <button id="test">Testar na fita</button>
+</div>
+<div id="msg"></div>
+<script src="options.js"></script>
+</body>
+</html>
