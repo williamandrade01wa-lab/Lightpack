@@ -13,6 +13,23 @@ _/_/_/_/  _/    _/_/_/  _/    _/      _/_/  _/_/_/      _/_/_/    _/_/_/  _/    
 #    Software changelog
 ===================================================================================
 
+Version 5.13.0.0
+---------------
+(unreleased, fork williamandrade01wa-lab/Lightpack)
+
+* Modes (scenes) stored in the profile (Compositor/Scenes, Compositor/ActiveScene):
+  Trabalho, Midia and Foco; GET/PUT /api/v1/scenes, POST /scenes/{id}/activate,
+  state.scene and WebSocket event scene.changed; tray submenu "Modos"
+* Triggers accept an optional "source"; the active scene filters by allowed
+  sources and minimum priority (202 with suppressed:true); without target the
+  scene's target groups are used
+* Desk groups after calibration: desk-left 71-97, desk-center 98-131
+  (under the monitor), desk-right 132-158
+* Web panel: mode buttons, scene editor, "find the center" assistant, per-LED
+  colour and source filter
+* integrations/: Claude Code hook (port 3637, source "claude") and a
+  Chrome/Edge extension for Claude.ai, ChatGPT and WhatsApp Web
+
 Version 5.12.0.0
 ---------------
 (unreleased, fork williamandrade01wa-lab/Lightpack)
