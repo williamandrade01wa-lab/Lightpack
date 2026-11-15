@@ -30,7 +30,7 @@
 #define VERSION_STR "5.13.0.0"
 
 // Resource defines using in Lightpack.rc
-#define VER_FILEVERSION				5,12,0,0
+#define VER_FILEVERSION				5,13,0,0
 #define VER_PRODUCTVERSION			VER_FILEVERSION
 
 #define VER_FILEVERSION_STR			VERSION_STR "\0"
