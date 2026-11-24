@@ -77,6 +77,8 @@ namespace
 		allow.append(QStringLiteral("chatgpt"));
 		allow.append(QStringLiteral("whatsapp"));
 		allow.append(QStringLiteral("sistema"));
+		allow.append(QStringLiteral("openbot"));
+		allow.append(QStringLiteral("raphael"));
 		QJsonArray target;
 		target.append(QStringLiteral("desk-left"));
 		target.append(QStringLiteral("desk-right"));
