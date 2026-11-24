@@ -544,7 +544,8 @@ void GrabManager::timeoutFakeGrab()
 void GrabManager::timeoutUpdateFPS()
 {
 	DEBUG_HIGH_LEVEL << Q_FUNC_INFO;
-	emit ambilightTimeOfUpdatingColors((2.0 * FPS_UPDATE_INTERVAL.count()) / (m_grabCountLastInterval + m_grabCountThisInterval));
+	const int frames = m_grabCountLastInterval + m_grabCountThisInterval;
+	emit ambilightTimeOfUpdatingColors(frames > 0 ? (2.0 * FPS_UPDATE_INTERVAL.count()) / frames : 0.0);
 
 	m_grabCountLastInterval = m_grabCountThisInterval;
 	m_grabCountThisInterval = 0;
