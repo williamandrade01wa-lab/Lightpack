@@ -1,0 +1,18 @@
+# Set line endings only for files introduced or updated by the proposed web patches.
+/.gitattributes text eol=lf
+/.github/workflows/ci.yml text eol=lf
+/Software/dist_linux/dpkg/build.sh text eol=lf
+/Software/integrations/README.md text eol=lf
+/Software/integrations/hooks/claude-done.ps1 text eol=lf
+/Software/res/LightpackResources.qrc text eol=lf
+/Software/res/www/app.js text eol=lf
+/Software/res/www/dev/mock-server.js text eol=lf
+/Software/res/www/test.html text eol=lf
+/Software/scripts/check_packaged_portal.py text eol=lf
+/Software/scripts/win32/generate_sln.bat text eol=crlf
+/Software/src/src.pro text eol=lf
+/Software/src/web/GroupValidation.hpp text eol=lf
+/Software/src/web/HttpApiServer.cpp text eol=lf
+/Software/src/web/HttpApiServer.hpp text eol=lf
+/Software/tests/web-core/tst_WebCore.cpp text eol=lf
+/Software/tests/web-core/web-core.pro text eol=lf
