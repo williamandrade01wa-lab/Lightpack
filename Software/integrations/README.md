@@ -63,5 +63,7 @@ Os seletores ficam em `browser-extension/sites.js`. Ajuste o seletor do botão/i
 
 - Lê o token de `[WebApi] Token` no `main.conf` (nunca imprime nem grava em log).
 - Faz `POST /api/v1/trigger` com `source: "claude"`, sem `target` (a cena ativa escolhe as pontas).
-- Se a API web falhar (Prismatik antigo, API desligada), usa a **reserva**: API TCP na porta 3636 com os grupos `desk-center` + `desk-ends`.
+- A **reserva** exige `PRISMATIK_LEGACY_FALLBACK=1` e só roda se a API web estiver desligada, sem configuração web numa versão antiga, ou se a conexão local falhar antes do envio.
+- Supressão pela cena, recusa HTTP e resultado incerto (como prazo esgotado) não disparam a reserva.
+- A API TCP na porta 3636 recebe a origem `claude` e os grupos `desk-center` + `desk-ends`. Essa API não aplica a política de cena da API web.
 - Silencioso: se nada estiver disponível, sai sem erro.
