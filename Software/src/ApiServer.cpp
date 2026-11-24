@@ -255,8 +255,15 @@ void ApiServer::apiServerSettingsChanged()
 
 void ApiServer::updateApiKey(const QString &key)
 {
-	DEBUG_LOW_LEVEL << Q_FUNC_INFO << key;
+	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
 
+	if (m_apiAuthKey != key) {
+		for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+			it->isAuthorized = key.isEmpty();
+			if (lightpack->CheckLock(it->sessionKey) == 1)
+				lightpack->UnLock(it->sessionKey);
+		}
+	}
 	m_apiAuthKey = key;
 
 	if (key.isEmpty())
@@ -315,7 +322,7 @@ void ApiServer::clientProcessCommands()
 		int m_lockedClient = lightpack->CheckLock(sessionKey);
 
 		QByteArray cmdBuffer = client->readLine().trimmed();
-		API_DEBUG_OUT << cmdBuffer;
+		API_DEBUG_OUT << "received API command";
 
 		QString result = CmdUnknown;
 
@@ -348,7 +355,6 @@ void ApiServer::clientProcessCommands()
 			if (m_isAuthEnabled)
 			{
 				cmdBuffer.remove(0, cmdBuffer.indexOf(':') + 1);
-				API_DEBUG_OUT << QString(cmdBuffer);
 
 				if (cmdBuffer == m_apiAuthKey)
 				{
@@ -358,7 +364,7 @@ void ApiServer::clientProcessCommands()
 
 					result = CmdApiKeyResult_Ok;
 				} else {
-					API_DEBUG_OUT << CmdApiKey << "Api key is not valid:" << QString(cmdBuffer);
+					API_DEBUG_OUT << CmdApiKey << "authorization rejected";
 
 					m_clients[client].isAuthorized = false;
 
