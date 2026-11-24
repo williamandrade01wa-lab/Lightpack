@@ -3,7 +3,7 @@
 export QT_SELECT=qt5
 
 cd ../..
-qmake -r
+qmake -r "CONFIG+=require_webapi"
 make
 cd -
 

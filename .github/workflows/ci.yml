@@ -9,6 +9,22 @@ defaults:
   run:
     working-directory: ./Software
 jobs:
+  test-web-core-linux:
+    name: Web core tests (Linux Qt 5)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt Test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qtbase5-dev qt5-qmake
+      - name: Run web core tests
+        working-directory: Software/tests/web-core
+        run: |
+          QT_SELECT=qt5 qmake web-core.pro
+          make -j2
+          bin/WebCoreTests
+
   build-pacman:
     runs-on: ubuntu-24.04
     name: pacman Build (Arch Linux)
@@ -73,6 +89,9 @@ jobs:
         run: |
           set -xe
           PKG_PATH=$(ls dist_linux/dpkg/prismatik*.deb)
+          unpacked=$(mktemp -d)
+          dpkg-deb -x "$PKG_PATH" "$unpacked"
+          python3 -I scripts/check_packaged_portal.py "$unpacked/usr/bin/prismatik" linux-qt5
           echo "PKG_PATH=Software/$PKG_PATH" >> $GITHUB_ENV
           echo "PKG_NAME=$(basename $PKG_PATH | sed 's#amd64#${{ matrix.os }}_amd64#; s# ##')" >> $GITHUB_ENV
       - name: Upload Package
@@ -147,6 +166,13 @@ jobs:
           version: '6.8.*'
           arch: win64_msvc2022_64
           modules: qtserialport qtwebsockets
+      - name: Run web core tests
+        shell: cmd
+        working-directory: Software/tests/web-core
+        run: |
+          "%QT_ROOT_DIR%\bin\qmake.exe" web-core.pro "CONFIG+=release" "CONFIG-=debug_and_release" || exit /b 1
+          nmake || exit /b 1
+          bin\WebCoreTests.exe
       - name: Cached Bass
         id: cache-bass
         uses: actions/cache@v4
@@ -192,12 +218,16 @@ jobs:
         run: |
           rem install-qt-action v4 exports QT_ROOT_DIR (v3 exported Qt6_Dir)
           set QTDIR=%QT_ROOT_DIR%
-          call scripts\win32\generate_sln.bat
+          call scripts\win32\generate_sln.bat "CONFIG+=require_webapi" || exit /b 1
           MSBuild.exe Lightpack.sln /p:Configuration=Release
       - name: Prepare Installer
         shell: bash
         run: |
           scripts/win32/prepare_installer.sh
+      - name: Verify portal inputs for the installer
+        shell: bash
+        run: |
+          python -I scripts/check_packaged_portal.py dist_windows/content/Prismatik.exe windows-qt6
       - name: Build Installer
         shell: cmd
         run: |

@@ -16,6 +16,8 @@ DESTDIR     = ../bin
 TEMPLATE    = app
 QT         += network widgets
 
+CONFIG(require_webapi):!qtHaveModule(websockets):error(QtWebSockets is required for this package)
+
 # local web server needs QtWebSockets (optional: e.g. not packaged for Qt5 on Arch)
 qtHaveModule(websockets) {
     QT += websockets
