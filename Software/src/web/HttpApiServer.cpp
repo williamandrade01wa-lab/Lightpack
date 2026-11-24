@@ -927,6 +927,9 @@ HttpApiServer::Response HttpApiServer::handleScenes(const Request &request, cons
 	if (parts.size() == 3 && parts[2] == QLatin1String("activate") && m == "POST") {
 		// answer with the new state right away; the GUI thread applies it (no capture restart)
 		const QJsonArray groups = scene.value(QLatin1String("groups")).toArray();
+		QString error;
+		if (!validateSceneLedCount(groups, ledCount(), &error))
+			return errorResponse(400, QStringLiteral("invalid_leds"), error);
 		CachedGroups c;
 		c.json = groups.isEmpty() ? QString() : compactJson(groups);
 		c.age.start();

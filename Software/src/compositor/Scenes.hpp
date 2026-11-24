@@ -40,6 +40,8 @@ namespace Compositor
 	// which knows the LED count)
 	bool validateSceneShape(const QJsonObject &scene, QString *error);
 
+	bool validateSceneLedCount(const QJsonArray &groups, int ledCount, QString *error);
+
 	struct TriggerPolicy {
 		bool suppressed{ false };
 		QString reason;            // "source" or "priority" when suppressed

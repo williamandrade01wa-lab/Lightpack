@@ -811,6 +811,11 @@ void LightpackApplication::activateScene(const QString &id)
 	}
 	// only the groups change: the grabber keeps running, the compositor picks the new layout
 	const QJsonArray groups = scene.value(QLatin1String("groups")).toArray();
+	QString error;
+	if (!Compositor::validateSceneLedCount(groups, Settings::getNumberOfLeds(Settings::getConnectedDevice()), &error)) {
+		qWarning() << Q_FUNC_INFO << error;
+		return;
+	}
 	Settings::setCompositorGroupsJson(groups.isEmpty() ? QString()
 		: QString::fromUtf8(QJsonDocument(groups).toJson(QJsonDocument::Compact)));
 	Settings::setCompositorActiveScene(id);

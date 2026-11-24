@@ -11,6 +11,7 @@
  */
 
 #include "Scenes.hpp"
+#include "Effects.hpp"
 
 #include <QJsonDocument>
 #include <QJsonValue>
@@ -179,6 +180,27 @@ bool validateSceneShape(const QJsonObject &scene, QString *error)
 	if (!p.isUndefined() && !p.isNull() && (!p.isDouble() || p.toDouble() < 0 || p.toDouble() > 100)) {
 		*error = QStringLiteral("triggers.min_priority must be 0..100");
 		return false;
+	}
+	return true;
+}
+
+bool validateSceneLedCount(const QJsonArray &groups, int ledCount, QString *error)
+{
+	if (ledCount <= 0 && !groups.isEmpty()) {
+		*error = QStringLiteral("the device has no LEDs configured");
+		return false;
+	}
+	for (const QJsonValue &value : groups) {
+		LedSet set;
+		if (!parseLedSet(value.toObject().value(QLatin1String("leds")).toObject(), &set, error))
+			return false;
+		for (int index : set.indices) {
+			if (index < 0 || index >= ledCount) {
+				*error = QStringLiteral("scene LED index %1 is outside the configured LED count (%2)")
+					.arg(index).arg(ledCount);
+				return false;
+			}
+		}
 	}
 	return true;
 }
