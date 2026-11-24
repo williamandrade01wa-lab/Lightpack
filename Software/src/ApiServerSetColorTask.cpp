@@ -42,6 +42,7 @@ void ApiServerSetColorTask::startParseSetColorTask(QByteArray buffer)
 {
 	API_DEBUG_OUT << QString(buffer) << "task thread:" << thread()->currentThreadId();
 	bool isReadFail = false;
+	QList<QRgb> pendingColors = m_colors;
 
 	// buffer can contains only something like this:
 	// 1-34,9,125
@@ -132,7 +133,11 @@ void ApiServerSetColorTask::startParseSetColorTask(QByteArray buffer)
 					goto end;
 				}
 				isDigitExpected = true;
-				indexRgb++;
+				if (++indexRgb >= bSize)
+				{
+					isReadFail = true;
+					goto end;
+				}
 			} else {
 				buffRgb[indexRgb] *= 10;
 				buffRgb[indexRgb] += d;
@@ -148,16 +153,22 @@ void ApiServerSetColorTask::startParseSetColorTask(QByteArray buffer)
 			}
 		}
 
+		if (isDigitExpected || indexRgb != bSize - 1)
+		{
+			isReadFail = true;
+			goto end;
+		}
+
 		// Remove read colors
 		buffer.remove(0, indexBuffer);
 
 		// Save colors
-		m_colors[ledNumber] = qRgb(buffRgb[bRed], buffRgb[bGreen], buffRgb[bBlue]);
+		pendingColors[ledNumber] = qRgb(buffRgb[bRed], buffRgb[bGreen], buffRgb[bBlue]);
 
 		API_DEBUG_OUT << "result color:" << buffRgb[bRed] << buffRgb[bGreen] << buffRgb[bBlue]
 						<< "buffer:" << QString(buffer);
 
-		if (buffer[0] == ';')
+		if (!buffer.isEmpty() && buffer[0] == ';')
 		{
 			// Remove semicolon
 			buffer.remove(0, 1);
@@ -173,6 +184,7 @@ end:
 		emit taskParseSetColorIsSuccess(false);
 	} else {
 		API_DEBUG_OUT << "read setcolor buffer - ok";
+		m_colors.swap(pendingColors);
 		emit taskParseSetColorDone(m_colors);
 		emit taskParseSetColorIsSuccess(true);
 	}
