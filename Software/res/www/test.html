@@ -29,7 +29,9 @@
 </div>
 <div class="card"><pre id="log"></pre></div>
 <script>
-const TOKEN = "%%PRISMATIK_TOKEN%%";
+// Development-only page. Supply a temporary local credential in the fragment.
+const TOKEN = new URLSearchParams(location.hash.slice(1)).get("t") || "";
+if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 const strip = document.getElementById("strip");
 const statusEl = document.getElementById("status");
 const statsEl = document.getElementById("stats");

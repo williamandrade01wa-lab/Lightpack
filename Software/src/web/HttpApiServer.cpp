@@ -573,13 +573,6 @@ HttpApiServer::Response HttpApiServer::serveStatic(const QString &rawPath)
 		if (f.open(QIODevice::ReadOnly)) {
 			data = f.readAll();
 			found = true;
-		} else if (rawPath == QLatin1String("/")) {
-			QFile t(QStringLiteral(":/www/test.html"));
-			if (t.open(QIODevice::ReadOnly)) {
-				data = t.readAll();
-				path = QStringLiteral("/test.html");
-				found = true;
-			}
 		}
 	}
 	if (!found)
@@ -587,9 +580,6 @@ HttpApiServer::Response HttpApiServer::serveStatic(const QString &rawPath)
 
 	Response r;
 	r.contentType = contentTypeFor(path);
-	// safe because of the Host check and no CORS: only pages served from this origin can read it
-	if (path.endsWith(QLatin1String(".html")))
-		data.replace("%%PRISMATIK_TOKEN%%", m_token.toUtf8());
 	r.body = data;
 	addHeader(r.headers, "Content-Security-Policy", "default-src 'self'; connect-src 'self' ws://127.0.0.1:" + QByteArray::number(m_port) + " ws://localhost:" + QByteArray::number(m_port) + "; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:");
 	return r;

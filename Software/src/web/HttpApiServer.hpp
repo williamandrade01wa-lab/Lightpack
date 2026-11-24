@@ -4,7 +4,7 @@
  *	Project: Prismatik
  *
  *	Local web server: REST API (/api/v1/...), WebSocket (/ws) and static files
- *	(panel, test page) on one port (default 127.0.0.1:3637).
+ *	(panel) on one port (default 127.0.0.1:3637).
  *
  *	HTTP is a minimal parser on QTcpServer (QtHttpServer needs Qt 6.4, but the
  *	Linux build uses Qt 5). A connection that asks for "Upgrade: websocket" on /ws
