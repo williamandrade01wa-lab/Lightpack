@@ -67,4 +67,5 @@ private:
 	QString m_portName;
 	int m_baudRate;
 	QTimer* m_lastWillTimer{nullptr};
+	QTimer* m_writeProgress{nullptr};
 };

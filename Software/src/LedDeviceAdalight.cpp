@@ -46,6 +46,15 @@ LedDeviceAdalight::LedDeviceAdalight(const QString &portName, const int baudRate
 	m_AdalightDevice = NULL;
 	m_lastWillTimer = new QTimer(this);
 	m_lastWillTimer->setTimerType(Qt::PreciseTimer);
+	m_writeProgress = new QTimer(this);
+	m_writeProgress->setSingleShot(true);
+	m_writeProgress->setInterval(1000);
+	connect(m_writeProgress, &QTimer::timeout, this, [this]() {
+		if (m_AdalightDevice && m_AdalightDevice->isOpen() && m_AdalightDevice->bytesToWrite() > 0) {
+			m_lastWillTimer->stop();
+			emit ioDeviceSuccess(false);
+		}
+	});
 	connect(m_lastWillTimer, &QTimer::timeout, this, qOverload<>(&LedDeviceAdalight::writeLastWill));
 	// TODO: think about init m_savedColors in all ILedDevices
 
@@ -65,6 +74,7 @@ int LedDeviceAdalight::maxLedsCount()
 
 void LedDeviceAdalight::close()
 {
+	m_writeProgress->stop();
 	if (m_AdalightDevice == NULL)
 		return;
 
@@ -201,10 +211,25 @@ void LedDeviceAdalight::open()
 //	m_gamma = Settings::getDeviceGamma();
 //	m_brightness = Settings::getDeviceBrightness();
 
-	if (m_AdalightDevice != NULL)
+	m_writeProgress->stop();
+	if (m_AdalightDevice != NULL) {
 		m_AdalightDevice->close();
-	else
-		m_AdalightDevice = new QSerialPort();
+	} else {
+		m_AdalightDevice = new QSerialPort(this);
+		connect(m_AdalightDevice, &QSerialPort::bytesWritten, this, [this](qint64 written) {
+			if (written > 0 && m_AdalightDevice->bytesToWrite() > 0)
+				m_writeProgress->start();
+			else if (m_AdalightDevice->bytesToWrite() == 0)
+				m_writeProgress->stop();
+		});
+		connect(m_AdalightDevice, &QSerialPort::errorOccurred, this, [this](QSerialPort::SerialPortError error) {
+			if (error == QSerialPort::ResourceError || error == QSerialPort::WriteError) {
+				m_writeProgress->stop();
+				m_lastWillTimer->stop();
+				emit ioDeviceSuccess(false);
+			}
+		});
+	}
 
 	m_AdalightDevice->setPortName(m_portName);// Settings::getAdalightSerialPortName());
 
@@ -294,7 +319,8 @@ bool LedDeviceAdalight::writeBuffer(const QByteArray & buff)
 		return false;
 	}
 
-	emit ioDeviceSuccess(true);
+	if (m_AdalightDevice->bytesToWrite() > 0)
+		m_writeProgress->start();
 	return true;
 }
 
