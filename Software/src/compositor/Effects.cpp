@@ -157,7 +157,7 @@ int naturalDurationMs(const Pattern &p)
 
 Rgba evaluate(const Pattern &p, double tMs, float pos)
 {
-	const double phase = std::fmod(tMs / p.periodMs, 1.0);
+	const double phase = p.animated() ? std::fmod(tMs / p.periodMs, 1.0) : 0.0;
 	switch (p.kind) {
 	case Kind::Off:
 		return { 0, 0, 0, 1 };

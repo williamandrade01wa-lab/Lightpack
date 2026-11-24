@@ -400,7 +400,9 @@ void FrameCompositor::emitFrame()
 	m_hasCurrent = true;
 
 	// 3. OVERLAYS (not smoothed, so pulses stay crisp)
-	QVector<float> frame = m_current;
+	QVector<float> overlayFrame;
+	if (!m_overlays.isEmpty())
+		overlayFrame = m_current;
 	bool overlaysDirty = false;
 	for (int idx = 0; idx < m_overlays.size(); ++idx) {
 		Overlay &o = m_overlays[idx];
@@ -416,7 +418,7 @@ void FrameCompositor::emitFrame()
 			const int led = o.resolved[k];
 			const Rgba c = evaluate(o.effect, t, n > 1 ? float(k) / float(n - 1) : 0.0f);
 			const float a = qBound(0.0f, c.a * env * o.opacity, 1.0f);
-			float *px = &frame[led * 3];
+			float *px = &overlayFrame[led * 3];
 			const float src[3] = { c.r, c.g, c.b };
 			for (int ch = 0; ch < 3; ++ch) {
 				switch (o.blend) {
@@ -429,6 +431,7 @@ void FrameCompositor::emitFrame()
 	}
 
 	// 4. OUTPUT
+	const QVector<float> &frame = overlayFrame.isEmpty() ? m_current : overlayFrame;
 	QList<QRgb> out;
 	out.reserve(m_ledCount);
 	for (int i = 0; i < m_ledCount; ++i)
