@@ -750,9 +750,19 @@ GrabResult DDuplGrabber::grabScreens()
 				requestRecovery("AcquireNextFrame failed");
 				return GrabResultFrameNotReady;
 			}
+			struct AcquiredFrame {
+				IDXGIOutputDuplicationPtr &duplication;
+				bool held = true;
+				void release() {
+					if (held) {
+						held = false;
+						duplication->ReleaseFrame();
+					}
+				}
+				~AcquiredFrame() { release(); }
+			} frame{screenData->duplication};
 			if (frameInfo.LastPresentTime.QuadPart == 0) {
 				// No update since last aquisition. Consider it done.
-				screenData->duplication->ReleaseFrame();
 				continue;
 			}
 			ID3D11Texture2DPtr texture;
@@ -778,14 +788,12 @@ GrabResult DDuplGrabber::grabScreens()
 				// Typical when a fullscreen game changes resolution without Qt noticing yet.
 				// Previously this returned an error on every tick and capture stayed dead;
 				// release the frame and recreate the duplication for the new mode instead.
-				screenData->duplication->ReleaseFrame();
 				requestRecovery("frame size does not match screen (resolution change?)");
 				return GrabResultFrameNotReady;
 			}
 			BufferFormat bufferFormat = mapDXGIFormatToBufferFormat(desc.Format);
 			if (bufferFormat == BufferFormat::BufferFormatUnknown) {
 				qWarning() << "Unsupported format " << desc.Format << " on frame " << grabScreensCount;
-				screenData->duplication->ReleaseFrame();
 				// This is not a good format. Drop it.
 				continue;
 			}
@@ -835,7 +843,6 @@ GrabResult DDuplGrabber::grabScreens()
 				if (FAILED(hr))
 				{
 					qCritical(Q_FUNC_INFO " Failed to CreateTexture2D: 0x%X", hr);
-					screenData->duplication->ReleaseFrame();
 					return GrabResultError;
 				}
 
@@ -859,7 +866,6 @@ GrabResult DDuplGrabber::grabScreens()
 					{
 						qCritical(Q_FUNC_INFO " Failed to CreateTexture2D: 0x%X", hr);
 						screenData->textureCopy = nullptr;
-						screenData->duplication->ReleaseFrame();
 						return GrabResultError;
 					}
 					hr = screenData->device->CreateShaderResourceView(screenData->scaledTexture, NULL, &screenData->scaledTextureView);
@@ -868,7 +874,6 @@ GrabResult DDuplGrabber::grabScreens()
 						qCritical(Q_FUNC_INFO " Failed to CreateShaderResourceView: 0x%X", hr);
 						screenData->textureCopy = nullptr;
 						screenData->scaledTexture = nullptr;
-						screenData->duplication->ReleaseFrame();
 						return GrabResultError;
 					}
 				}
@@ -889,7 +894,8 @@ GrabResult DDuplGrabber::grabScreens()
 
 			// the desktop image has been copied on the GPU; hand the frame back to DXGI
 			// before the (potentially blocking) CPU map instead of after it
-			screenData->duplication->ReleaseFrame();
+
+			frame.release();
 
 			IDXGISurface1Ptr surface;
 			hr = screenData->textureCopy->QueryInterface(IID_IDXGISurface1, (void**)&surface);
