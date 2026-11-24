@@ -7,6 +7,7 @@
 
 using namespace Compositor;
 
+// Use escaped JSON literals so Qt 5 moc can parse the test slots.
 class WebCoreTest : public QObject
 {
 	Q_OBJECT
@@ -14,7 +15,7 @@ class WebCoreTest : public QObject
 private slots:
 	void permitsSourceIgnoringCase()
 	{
-		const auto scene = QJsonDocument::fromJson(R"({"triggers":{"allow":["claude"],"target_groups":["desk"]}})").object();
+		const auto scene = QJsonDocument::fromJson("{\"triggers\":{\"allow\":[\"claude\"],\"target_groups\":[\"desk\"]}}").object();
 		const auto policy = triggerPolicy(scene, QStringLiteral("CLAUDE"), 50);
 		QVERIFY(!policy.suppressed);
 		QCOMPARE(policy.targetGroups, QStringList{QStringLiteral("desk")});
@@ -22,7 +23,7 @@ private slots:
 
 	void rejectsSourceOutsideAllowList()
 	{
-		const auto scene = QJsonDocument::fromJson(R"({"triggers":{"allow":["claude"]}})").object();
+		const auto scene = QJsonDocument::fromJson("{\"triggers\":{\"allow\":[\"claude\"]}}").object();
 		const auto policy = triggerPolicy(scene, QStringLiteral("system"), 100);
 		QVERIFY(policy.suppressed);
 		QCOMPARE(policy.reason, QStringLiteral("source"));
@@ -30,7 +31,7 @@ private slots:
 
 	void checksPriorityAndPreservesLegacySource()
 	{
-		const auto scene = QJsonDocument::fromJson(R"({"triggers":{"allow":["claude"],"min_priority":55}})").object();
+		const auto scene = QJsonDocument::fromJson("{\"triggers\":{\"allow\":[\"claude\"],\"min_priority\":55}}").object();
 		const auto policy = triggerPolicy(scene, QStringLiteral("claude"), 54);
 		QVERIFY(policy.suppressed);
 		QCOMPARE(policy.reason, QStringLiteral("priority"));
@@ -40,7 +41,7 @@ private slots:
 
 	void acceptsWellFormedScene()
 	{
-		const auto scene = QJsonDocument::fromJson(R"({"id":"work-1","name":"Work","groups":[],"triggers":{"allow":["claude"],"min_priority":100}})").object();
+		const auto scene = QJsonDocument::fromJson("{\"id\":\"work-1\",\"name\":\"Work\",\"groups\":[],\"triggers\":{\"allow\":[\"claude\"],\"min_priority\":100}}").object();
 		QString error;
 		QVERIFY2(validateSceneShape(scene, &error), qPrintable(error));
 	}
@@ -48,15 +49,15 @@ private slots:
 	void rejectsMalformedScene()
 	{
 		QString error;
-		const auto badId = QJsonDocument::fromJson(R"({"id":"wrong id"})").object();
+		const auto badId = QJsonDocument::fromJson("{\"id\":\"wrong id\"}").object();
 		QVERIFY(!validateSceneShape(badId, &error));
-		const auto badSource = QJsonDocument::fromJson(R"({"id":"work","triggers":{"allow":[42]}})").object();
+		const auto badSource = QJsonDocument::fromJson("{\"id\":\"work\",\"triggers\":{\"allow\":[42]}}").object();
 		QVERIFY(!validateSceneShape(badSource, &error));
 	}
 
 	void validatesPatternContext()
 	{
-		const auto wave = QJsonDocument::fromJson(R"({"type":"wave","color":"#aabbcc"})").object();
+		const auto wave = QJsonDocument::fromJson("{\"type\":\"wave\",\"color\":\"#aabbcc\"}").object();
 		Pattern pattern;
 		QString error;
 		QVERIFY2(parsePattern(wave, &pattern, &error, true), qPrintable(error));
@@ -66,7 +67,7 @@ private slots:
 
 	void requiresTwoGradientStops()
 	{
-		const auto gradient = QJsonDocument::fromJson(R"({"type":"gradient","stops":[{"at":0,"color":"#aabbcc"}]})").object();
+		const auto gradient = QJsonDocument::fromJson("{\"type\":\"gradient\",\"stops\":[{\"at\":0,\"color\":\"#aabbcc\"}]}").object();
 		Pattern pattern;
 		QString error;
 		QVERIFY(!parsePattern(gradient, &pattern, &error, false));
@@ -74,19 +75,19 @@ private slots:
 
 	void acceptsDisjointGroups()
 	{
-		const auto groups = QJsonDocument::fromJson(R"([
-			{"id":"a","leds":{"list":[0]},"mode":{"type":"source"}},
-			{"id":"b","leds":{"ranges":[[1,2]]},"mode":{"type":"off"}}
-		])").array();
+		const auto groups = QJsonDocument::fromJson("["
+			"{\"id\":\"a\",\"leds\":{\"list\":[0]},\"mode\":{\"type\":\"source\"}},"
+			"{\"id\":\"b\",\"leds\":{\"ranges\":[[1,2]]},\"mode\":{\"type\":\"off\"}}"
+			"]").array();
 		QCOMPARE(WebApi::validateGroups(groups, 3).status, 200);
 	}
 
 	void rejectsOverlappingGroups()
 	{
-		const auto groups = QJsonDocument::fromJson(R"([
-			{"id":"a","leds":{"all":true},"mode":{"type":"source"}},
-			{"id":"b","leds":{"list":[1]},"mode":{"type":"off"}}
-		])").array();
+		const auto groups = QJsonDocument::fromJson("["
+			"{\"id\":\"a\",\"leds\":{\"all\":true},\"mode\":{\"type\":\"source\"}},"
+			"{\"id\":\"b\",\"leds\":{\"list\":[1]},\"mode\":{\"type\":\"off\"}}"
+			"]").array();
 		const auto result = WebApi::validateGroups(groups, 3);
 		QCOMPARE(result.status, 409);
 		QCOMPARE(result.code, QStringLiteral("led_conflict"));
@@ -94,9 +95,9 @@ private slots:
 
 	void rejectsOutOfRangeGroupLed()
 	{
-		const auto groups = QJsonDocument::fromJson(R"([
-			{"id":"a","leds":{"list":[3]},"mode":{"type":"source"}}
-		])").array();
+		const auto groups = QJsonDocument::fromJson("["
+			"{\"id\":\"a\",\"leds\":{\"list\":[3]},\"mode\":{\"type\":\"source\"}}"
+			"]").array();
 		const auto result = WebApi::validateGroups(groups, 3);
 		QCOMPARE(result.status, 400);
 		QCOMPARE(result.code, QStringLiteral("invalid_leds"));
