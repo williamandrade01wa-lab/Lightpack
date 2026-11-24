@@ -351,10 +351,8 @@ void FrameCompositor::scheduleEmit()
 		interval = FallbackIntervalMs;
 
 	const double wait = interval - elapsed;
-	if (wait <= 0.0)
-		emitFrame();
-	else
-		m_timer->start(int(std::ceil(wait)));
+	// Yield to device commands even when composition consumed the frame budget.
+	m_timer->start(wait > 0.0 ? int(std::ceil(wait)) : 0);
 }
 
 void FrameCompositor::emitFrame()
