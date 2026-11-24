@@ -776,6 +776,15 @@ void LightpackApplication::webSetBrightness(int value)
 
 void LightpackApplication::webSetGroups(const QString &profile, const QString &json)
 {
+	const bool isCurrentProfile = profile == Settings::getCurrentProfileName();
+	if (isCurrentProfile) {
+		const QString id = Settings::getCompositorActiveScene();
+		const QJsonObject scene = Compositor::findScene(
+			Compositor::scenesFromJson(Settings::getCompositorScenesJson()), id);
+		const QJsonArray groups = QJsonDocument::fromJson(json.toUtf8()).array();
+		if (!id.isEmpty() && (scene.isEmpty() || scene.value(QLatin1String("groups")).toArray() != groups))
+			Settings::setCompositorActiveScene(QString());
+	}
 	Settings::setProfileCompositorGroupsJson(profile, json);
 }
 

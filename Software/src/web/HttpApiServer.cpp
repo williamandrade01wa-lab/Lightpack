@@ -722,6 +722,14 @@ void HttpApiServer::writeGroups(const QString &profile, const QJsonArray &groups
 	c.json = json;
 	c.age.start();
 	m_groupsCache.insert(profile, c);
+	if (profile == Settings::getCurrentProfileName()) {
+		const QString id = activeScene();
+		const QJsonObject scene = findScene(scenes(), id);
+		if (!id.isEmpty() && (scene.isEmpty() || scene.value(QLatin1String("groups")).toArray() != groups)) {
+			m_activeSceneCache.json.clear();
+			m_activeSceneCache.age.start();
+		}
+	}
 	emit groupsWriteRequested(profile, json);
 }
 
