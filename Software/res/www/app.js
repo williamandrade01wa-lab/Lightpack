@@ -119,11 +119,11 @@
   // state
   const S = {
     state: null, layout: null, profiles: [],
-    groups: [], saved: "[]", undo: [], open: null,
+    groups: [], saved: "[]", undo: [], open: null, groupsConflict: false,
     sel: new Set(), last: null,
     overlays: [], frame: null,
     tab: "inicio", stages: {},
-    scenes: [], scenesSaved: "[]", scEdit: null, srcFilter: "*", wiz: null,
+    scenes: [], scenesSaved: "[]", scEdit: null, scenesConflict: false, srcFilter: "*", wiz: null,
   };
   const TABS = ["inicio", "zonas", "modos", "gatilhos"];
   const KNOWN_SOURCES = ["claude", "chatgpt", "whatsapp", "sistema"];
@@ -168,6 +168,31 @@
   // ---------------------------------------------------------------------------
   // basic mode
   let brightnessDragging = false;
+  let profileRevision = 0;
+  let groupsRequest = 0, scenesRequest = 0;
+  const profileDrafts = new Map();
+
+  function switchEditorProfile(previous, next) {
+    if (previous && (isDirty() || scenesDirty() || S.undo.length)) {
+      profileDrafts.set(previous, {
+        groups: S.groups, saved: S.saved, undo: S.undo, open: S.open, groupsConflict: S.groupsConflict,
+        scenes: S.scenes, scenesSaved: S.scenesSaved, scEdit: S.scEdit, scenesConflict: S.scenesConflict,
+      });
+    }
+    if (S.wiz) wizEnd();
+    Object.assign(S, {
+      groups: [], saved: "[]", undo: [], open: null, groupsConflict: false,
+      scenes: [], scenesSaved: "[]", scEdit: null, scenesConflict: false,
+    }, profileDrafts.get(next));
+    profileDrafts.delete(next);
+    S.groupsProfile = next;
+    S.sel.clear();
+    S.last = null;
+    profileRevision++;
+    afterChange();
+    renderScenes();
+    renderPolicy();
+  }
   function applyState(st) {
     const prevProfile = S.state && S.state.profile;
     S.state = Object.assign(S.state || {}, st);
@@ -179,7 +204,10 @@
     renderProfiles();
     $("deviceInfo").textContent = [S.state.device, S.state.led_count ? S.state.led_count + " LEDs" : "", S.state.version ? "versão " + S.state.version : ""].filter(Boolean).join(" · ");
     $("groupsProfile").textContent = "“" + S.state.profile + "”";
-    if (prevProfile && prevProfile !== S.state.profile) onProfileSwitchedSoon();
+    if (prevProfile !== S.state.profile) {
+      switchEditorProfile(prevProfile, S.state.profile);
+      if (prevProfile) onProfileSwitchedSoon();
+    }
     renderModeBtns();
   }
   function renderProfiles() {
@@ -192,17 +220,15 @@
     if (S.state) sel.value = S.state.profile;
   }
   async function onProfileSwitched() {
+    const revision = profileRevision;
     try {
-      S.layout = await api("GET", "/layout");
+      const layout = await api("GET", "/layout");
+      if (revision !== profileRevision) return;
+      S.layout = layout;
       buildStages();
-    } catch (e) { /* shown elsewhere */ }
-    if (S.state.profile === S.groupsProfile && isDirty()) return; // same profile re-announced: keep the draft
-    if (isDirty()) {
-      toast("O perfil mudou. Suas mudanças de zonas não aplicadas foram descartadas.", true);
-    }
-    S.sel.clear();
-    await loadGroups();
-    await loadScenes();
+    } catch (e) { if (e.status !== 401 && revision === profileRevision) toast(e.message, true); }
+    if (revision === profileRevision)
+      await Promise.all([loadGroups({ preserve: true }), loadScenes({ preserve: true })]);
   }
   // the switch happens in the app a moment after the request: wait before reading layout/groups
   const onProfileSwitchedSoon = debounce(onProfileSwitched, 500);
@@ -519,29 +545,54 @@
   function updateSaveBar() {
     const dirty = isDirty();
     $("savebar").hidden = !dirty && !S.undo.length;
-    $("saveMsg").textContent = dirty ? "Há mudanças ainda não aplicadas na fita." : "Tudo aplicado.";
+    $("saveMsg").textContent = dirty && S.groupsConflict ? "As zonas remotas mudaram. Seu rascunho foi mantido."
+      : dirty ? "Há mudanças ainda não aplicadas na fita." : "Tudo aplicado.";
     $("save").disabled = !dirty;
     $("discard").disabled = !dirty;
     $("undo").disabled = !S.undo.length;
   }
-  async function loadGroups() {
+  async function loadGroups({ preserve = true, retry = false } = {}) {
     if (!S.state) return;
+    const profile = S.state.profile;
+    const revision = profileRevision;
+    const request = ++groupsRequest;
+    const current = () => revision === profileRevision && request === groupsRequest;
     try {
-      const g = await api("GET", "/profiles/" + encodeURIComponent(S.state.profile) + "/groups");
-      S.groups = Array.isArray(g) ? g : [];
-      S.groupsProfile = S.state.profile;
-      S.saved = JSON.stringify(S.groups);
-      S.undo = [];
-      afterChange();
-    } catch (e) { if (e.status !== 401) toast(e.message, true); }
+      const g = await api("GET", "/profiles/" + encodeURIComponent(profile) + "/groups");
+      if (!current()) return;
+      const groups = Array.isArray(g) ? g : [];
+      const saved = JSON.stringify(groups);
+      if (preserve && isDirty()) {
+        S.groupsConflict = saved !== S.saved;
+        updateSaveBar();
+      } else if (!preserve || saved !== S.saved) {
+        S.groups = groups;
+        S.saved = saved;
+        S.groupsConflict = false;
+        S.undo = [];
+        afterChange();
+      }
+    } catch (e) {
+      if (!current()) return;
+      if (retry) throw e;
+      if (e.status !== 401) toast(e.message, true);
+    }
   }
   async function saveGroups() {
     for (const g of S.groups) if (!groupIndices(g).length) { toast("O grupo “" + nameOf(g) + "” está sem LEDs. Escolha LEDs para ele ou apague.", true); return; }
+    if (S.groupsConflict && !confirm("As zonas remotas mudaram. Substituir as zonas remotas pelo rascunho?")) return;
+    const revision = profileRevision;
+    const submitted = JSON.stringify(S.groups);
+    ++groupsRequest;
     $("save").disabled = true;
     try {
-      const res = await api("PUT", "/profiles/" + encodeURIComponent(S.groupsProfile || S.state.profile) + "/groups", S.groups);
-      S.groups = Array.isArray(res) ? res : S.groups;
-      S.saved = JSON.stringify(S.groups);
+      const res = await api("PUT", "/profiles/" + encodeURIComponent(S.groupsProfile || S.state.profile) + "/groups", JSON.parse(submitted));
+      if (revision !== profileRevision) return;
+      ++groupsRequest;
+      const saved = Array.isArray(res) ? res : JSON.parse(submitted);
+      if (JSON.stringify(S.groups) === submitted) S.groups = saved;
+      S.saved = JSON.stringify(saved);
+      S.groupsConflict = false;
       afterChange();
       toast("Pronto! As mudanças já estão na fita.");
     } catch (e) {
@@ -924,17 +975,37 @@
     t.min_priority = +t.min_priority || 0;
     return t;
   };
-  async function loadScenes() {
+  async function loadScenes({ preserve = true, retry = false } = {}) {
+    const revision = profileRevision;
+    const request = ++scenesRequest;
+    const current = () => revision === profileRevision && request === scenesRequest;
+    let r;
     try {
-      const r = await api("GET", "/scenes");
-      S.scenes = Array.isArray(r) ? r : (r && r.scenes) || [];
-      if (r && !Array.isArray(r) && r.active && S.state) S.state.scene = r.active;
+      r = await api("GET", "/scenes");
     } catch (e) {
-      S.scenes = [];
-      if (e.status !== 401 && e.status !== 404) toast(e.message, true);
+      if (!current()) return;
+      if (e.status !== 404) {
+        if (retry) throw e;
+        if (e.status !== 401) toast(e.message, true);
+        return;
+      }
     }
-    S.scenes.forEach(trigOf);
-    S.scenesSaved = JSON.stringify(S.scenes);
+    if (!current()) return;
+    const scenes = Array.isArray(r) ? r : (r && r.scenes) || [];
+    scenes.forEach(trigOf);
+    const saved = JSON.stringify(scenes);
+    if (r && !Array.isArray(r) && r.active !== undefined) S.state.scene = r.active;
+    if (preserve && scenesDirty()) {
+      if (saved !== S.scenesSaved && !S.scenesConflict)
+        toast("Os modos remotos mudaram. Seu rascunho foi mantido.", true);
+      S.scenesConflict = saved !== S.scenesSaved;
+      renderModeBtns();
+      renderPolicy();
+      return;
+    }
+    S.scenes = scenes;
+    S.scenesSaved = saved;
+    S.scenesConflict = false;
     if (!S.scenes.some((s) => s.id === S.scEdit)) S.scEdit = (S.scenes.find((s) => s.id === activeSceneId()) || S.scenes[0] || {}).id || null;
     renderModeBtns();
     renderScenes();
@@ -973,7 +1044,7 @@
       applyState({ scene: id });
       toast("Modo “" + ((sc && sc.name) || id) + "” ligado.");
       renderScenes(); renderPolicy();
-      await loadGroups();
+      await loadGroups({ preserve: false });
     } catch (e) { toast(e.message, true); }
   }
   const curScene = () => S.scenes.find((s) => s.id === S.scEdit) || null;
@@ -1081,13 +1152,20 @@
   }
   async function saveScenes() {
     for (const sc of S.scenes) if (!(sc.name || "").trim()) { toast("Todo modo precisa de nome.", true); return; }
+    if (S.scenesConflict && !confirm("Os modos remotos mudaram. Substituir os modos remotos pelo rascunho?")) return;
+    const revision = profileRevision;
+    const submitted = JSON.stringify(S.scenes);
+    ++scenesRequest;
     $("scSave").disabled = true;
     try {
-      const r = await api("PUT", "/scenes", S.scenes);
-      if (Array.isArray(r)) S.scenes = r;
-      else if (r && Array.isArray(r.scenes)) S.scenes = r.scenes;
-      S.scenes.forEach(trigOf);
-      S.scenesSaved = JSON.stringify(S.scenes);
+      const r = await api("PUT", "/scenes", JSON.parse(submitted));
+      if (revision !== profileRevision) return;
+      ++scenesRequest;
+      const saved = Array.isArray(r) ? r : r && Array.isArray(r.scenes) ? r.scenes : JSON.parse(submitted);
+      saved.forEach(trigOf);
+      if (JSON.stringify(S.scenes) === submitted) S.scenes = saved;
+      S.scenesSaved = JSON.stringify(saved);
+      S.scenesConflict = false;
       renderScenes(); renderModeBtns(); renderPolicy();
       toast("Modos salvos no perfil.");
     } catch (e) { toast(e.message, true); updateSceneBar(); }
@@ -1206,7 +1284,10 @@
           setConn(true);
           ws.send(JSON.stringify({ type: "subscribe", channels: ["frame", "stats", "events"] }));
           if (m.state) applyState(m.state);
-          if (wsWasDown) { wsWasDown = false; refreshAll(); }
+          if (wsWasDown) {
+            wsWasDown = false;
+            refreshAfterReconnect(ws);
+          }
           break;
         case "frame": onFrame(m.rgb); break;
         case "stats": {
@@ -1245,21 +1326,30 @@
       if (!isDirty()) loadGroups();
       if (!scenesDirty()) loadScenes(); else { renderModeBtns(); renderScenes(); renderPolicy(); }
     }
-    else if (name === "profile.changed" && data.profile) { applyState({ profile: data.profile }); onProfileSwitchedSoon(); }
+    else if (name === "profile.changed" && data.profile) applyState({ profile: data.profile });
   }
 
   // ---------------------------------------------------------------------------
   // start
-  async function refreshAll() {
+  async function refreshAll(reconnecting = false, current = () => true) {
+    const revision = profileRevision;
     const [state, layout, profiles] = await Promise.all([api("GET", "/state"), api("GET", "/layout"), api("GET", "/profiles")]);
+    if (!current() || revision !== profileRevision) return;
     S.profiles = (profiles && profiles.profiles) || [];
     S.layout = layout;
-    S.state = null;
     applyState(state);
     buildStages();
-    await loadGroups();
-    await loadScenes();
-    await loadOverlays();
+    await Promise.all([loadGroups({ retry: reconnecting }), loadScenes({ retry: reconnecting }), loadOverlays()]);
+  }
+  async function refreshAfterReconnect(socket) {
+    const current = () => ws === socket;
+    try {
+      await refreshAll(true, current);
+    } catch (e) {
+      if (!current() || e.status === 401) return;
+      toast(e.message + " Tentando sincronizar de novo…", true);
+      setTimeout(() => { if (current()) refreshAfterReconnect(socket); }, 3000);
+    }
   }
   let bootTimer = 0;
   async function boot() {
@@ -1300,10 +1390,6 @@
     });
     $("profile").addEventListener("change", async () => {
       const p = $("profile").value;
-      if (isDirty() && !confirm("Há mudanças de zonas não aplicadas. Trocar de perfil vai descartá-las. Continuar?")) {
-        $("profile").value = S.state.profile;
-        return;
-      }
       try { await api("PATCH", "/state", { profile: p }); applyState({ profile: p }); }
       catch (e) { toast(e.message, true); $("profile").value = S.state.profile; }
     });
@@ -1360,7 +1446,8 @@
     });
     $("trigForm").addEventListener("input", updateTriggerForm);
     $("trigForm").addEventListener("change", updateTriggerForm);
-    window.addEventListener("beforeunload", (ev) => { if (isDirty() || scenesDirty()) { ev.preventDefault(); ev.returnValue = ""; } });
+    window.addEventListener("beforeunload", (ev) => { if (isDirty() || scenesDirty() || [...profileDrafts.values()].some((draft) =>
+      JSON.stringify(draft.groups) !== draft.saved || JSON.stringify(draft.scenes) !== draft.scenesSaved)) { ev.preventDefault(); ev.returnValue = ""; } });
     window.addEventListener("hashchange", () => { if (/(?:^#|&)t=/.test(location.hash)) boot(); });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && TOKEN && S.state) api("GET", "/state").then(applyState).catch(() => {});
