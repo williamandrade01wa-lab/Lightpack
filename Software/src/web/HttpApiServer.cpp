@@ -626,11 +626,10 @@ HttpApiServer::Response HttpApiServer::handleState(const Request &request)
 		if (!b.value(QLatin1String("profile")).isString() || !Settings::findAllProfiles().contains(b.value(QLatin1String("profile")).toString()))
 			return errorResponse(404, QStringLiteral("profile_not_found"), QStringLiteral("no such profile"));
 	}
-	if (b.contains(QLatin1String("brightness"))) {
-		const QJsonValue v = b.value(QLatin1String("brightness"));
-		if (!v.isDouble() || v.toInt() < 0 || v.toInt() > 100)
-			return errorResponse(400, QStringLiteral("invalid_value"), QStringLiteral("brightness must be 0..100"));
-	}
+	const auto brightnessKey = QLatin1String("brightness");
+	const int brightness = b.value(brightnessKey).toInt(-1);
+	if (b.contains(brightnessKey) && (brightness < 0 || brightness > 100))
+		return errorResponse(400, QStringLiteral("invalid_value"), QStringLiteral("brightness must be an integer from 0 to 100"));
 
 	if (b.contains(QLatin1String("on"))) {
 		const bool on = b.value(QLatin1String("on")).toBool();
@@ -641,9 +640,9 @@ HttpApiServer::Response HttpApiServer::handleState(const Request &request)
 		emit profileRequested(b.value(QLatin1String("profile")).toString());
 		state.insert(QStringLiteral("profile"), b.value(QLatin1String("profile")).toString());
 	}
-	if (b.contains(QLatin1String("brightness"))) {
-		emit brightnessRequested(b.value(QLatin1String("brightness")).toInt());
-		state.insert(QStringLiteral("brightness"), b.value(QLatin1String("brightness")).toInt());
+	if (b.contains(brightnessKey)) {
+		emit brightnessRequested(brightness);
+		state.insert(brightnessKey, brightness);
 	}
 	return jsonResponse(200, state);
 }
