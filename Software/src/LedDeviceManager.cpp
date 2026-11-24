@@ -72,13 +72,11 @@ LedDeviceManager::LedDeviceManager(QObject *parent)
 
 LedDeviceManager::~LedDeviceManager()
 {
+	for (AbstractLedDevice *device : m_ledDevices)
+		closeOnDeviceThread(device);
+
 	m_ledDeviceThread->quit();
 	m_ledDeviceThread->wait();
-
-	for (int i = 0; i < m_ledDevices.size(); i++) {
-		if(m_ledDevices[i])
-			m_ledDevices[i]->close();
-	}
 
 	if (m_cmdTimeoutTimer)
 		delete m_cmdTimeoutTimer;
@@ -104,14 +102,25 @@ void LedDeviceManager::init()
 	initLedDevice();
 }
 
+void LedDeviceManager::closeOnDeviceThread(AbstractLedDevice *device)
+{
+	if (!device)
+		return;
+	if (device->thread() == QThread::currentThread()) {
+		device->close();
+		return;
+	}
+	if (device->thread()->isRunning())
+		QMetaObject::invokeMethod(device, [device]() { device->close(); }, Qt::BlockingQueuedConnection);
+}
+
 void LedDeviceManager::recreateLedDevice()
 {
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO;
 
 	disconnectSignalSlotsLedDevice();
 
-	if (m_ledDevice != NULL)
-		m_ledDevice->close();
+	closeOnDeviceThread(m_ledDevice);
 
 	initLedDevice();
 }
@@ -708,7 +717,7 @@ void LedDeviceManager::onSessionChange(SystemSession::Status status)
 	DEBUG_LOW_LEVEL << Q_FUNC_INFO << "status:" << status;
 
 	if (status == SystemSession::Status::Sleeping)
-		m_ledDevice->close();
+		closeOnDeviceThread(m_ledDevice);
 	else if (status == SystemSession::Status::Resuming)
 		recreateLedDevice();
 }

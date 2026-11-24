@@ -68,10 +68,8 @@ void LedDeviceAdalight::close()
 	if (m_AdalightDevice == NULL)
 		return;
 
-	if (m_lastWillTimer->isActive()) {
-		m_lastWillTimer->stop();
-		writeLastWill(true);
-	}
+	// Discard the deferred frame; closing must not arm another retry.
+	m_lastWillTimer->stop();
 	m_AdalightDevice->close();
 
 	delete m_AdalightDevice;
@@ -262,6 +260,8 @@ void LedDeviceAdalight::writeLastWill()
 
 void LedDeviceAdalight::writeLastWill(const bool force)
 {
+	if (!m_AdalightDevice || !m_AdalightDevice->isOpen())
+		return;
 	if (force || m_AdalightDevice->bytesToWrite() == 0) {
 		DEBUG_MID_LEVEL << Q_FUNC_INFO << "Writing last will frame";
 		setColors(m_colorsSaved);

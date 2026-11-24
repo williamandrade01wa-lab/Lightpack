@@ -96,6 +96,9 @@ public slots:
 	void updateDeviceSettings();
 	void onSessionChange(SystemSession::Status status);
 
+private:
+	static void closeOnDeviceThread(AbstractLedDevice *device);
+
 private slots:
 	void ledDeviceCommandCompleted(bool ok);
 	void ledDeviceCommandTimedOut();
