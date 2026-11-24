@@ -1,22 +1,24 @@
-/* Prismatik web panel: plain JS, no build, no CDN (served from the app's resources). */
+/* Prismatik 5.13: same-origin REST + WebSocket, local preview when disconnected. */
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
+  const root = document.documentElement;
+  const room = $("room");
   const NS = "http://www.w3.org/2000/svg";
-  const TOKEN_KEY = "prismatik.token";
-  const safe = (fn, fallback) => { try { return fn(); } catch (e) { return fallback; } };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const safe = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
+  const simulation = new URLSearchParams(location.search).get("mock") === "1";
+  const storagePrefix = simulation ? "prismatik.lofi.mock." : "prismatik.lofi.";
   const session = {
     get: (k) => safe(() => sessionStorage.getItem(k), null),
     set: (k, v) => safe(() => sessionStorage.setItem(k, v)),
     del: (k) => safe(() => sessionStorage.removeItem(k)),
   };
   const local = {
-    get: (k) => safe(() => localStorage.getItem(k), null),
-    set: (k, v) => safe(() => localStorage.setItem(k, v)),
+    get: (k) => safe(() => localStorage.getItem(storagePrefix + k), null),
+    set: (k, v) => safe(() => localStorage.setItem(storagePrefix + k, v)),
   };
-
-  // ---------------------------------------------------------------------------
-  // token: arrives in the URL fragment (#t=...), which the browser never sends to the server
+  const TOKEN_KEY = "prismatik.token";
   let TOKEN = "";
   function readToken() {
     const m = /(?:^#|&)t=([^&]+)/.exec(location.hash);
@@ -28,1464 +30,1791 @@
       TOKEN = TOKEN || session.get(TOKEN_KEY) || "";
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // small helpers
-  let toastTimer = 0;
-  function toast(msg, isError) {
-    const t = $("toast");
-    t.textContent = msg;
-    t.className = "show" + (isError ? " err" : "");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { t.className = ""; }, isError ? 6000 : 3000);
-  }
-  function el(tag, attrs, ...kids) {
-    const e = document.createElement(tag);
-    for (const k in attrs || {}) {
-      if (k === "class") e.className = attrs[k];
-      else if (k.startsWith("on")) e.addEventListener(k.slice(2), attrs[k]);
-      else if (attrs[k] !== undefined && attrs[k] !== null && attrs[k] !== false) e.setAttribute(k, attrs[k] === true ? "" : attrs[k]);
-    }
-    for (const kid of kids) if (kid !== null && kid !== undefined) e.append(kid.nodeType ? kid : String(kid));
-    return e;
-  }
-  function svgEl(tag, attrs) {
-    const e = document.createElementNS(NS, tag);
-    for (const k in attrs) e.setAttribute(k, attrs[k]);
-    return e;
-  }
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const debounce = (fn, ms) => { let t = 0; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
-
-  // sorted unique indices -> [[a,b],...]
-  function toRanges(indices) {
-    const s = [...new Set(indices)].sort((a, b) => a - b);
-    const out = [];
-    for (const i of s) {
-      const last = out[out.length - 1];
-      if (last && i === last[1] + 1) last[1] = i; else out.push([i, i]);
-    }
-    return out;
-  }
-  // human text, 1-based like the Prismatik window: "72–98, 132"
-  function rangesText(indices, max) {
-    const parts = toRanges(indices).map(([a, b]) => (a === b ? String(a + 1) : (a + 1) + "–" + (b + 1)));
-    const lim = max || 6;
-    return parts.length > lim ? parts.slice(0, lim).join(", ") + " …" : parts.join(", ");
-  }
-
-  // ---------------------------------------------------------------------------
-  // API
-  const ERR = {
-    led_conflict: "Um LED não pode ficar em dois grupos ao mesmo tempo.",
-    invalid_group: "Nome de grupo inválido.",
-    id_exists: "Já existe um grupo com esse código.",
-    invalid_leds: "Escolha de LEDs inválida.",
-    invalid_mode: "Configuração do modo inválida.",
-    profile_not_found: "Perfil não encontrado.",
-    rate_limited: "Muitos efeitos de uma vez. Espere um segundo.",
-    invalid_trigger: "Efeito inválido.",
-    unknown_group: "Esse grupo ainda não existe na fita. Aplique as mudanças na aba Zonas primeiro.",
-    invalid_value: "Valor inválido.",
-    invalid_json: "Pedido inválido.",
-    scene_not_found: "Esse modo não existe mais. Recarregue a página.",
-    invalid_scene: "Modo inválido. Confira o nome e as opções.",
+  const prefersDark = matchMedia("(prefers-color-scheme: dark)");
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const styleIds = ["lofi", "retro", "cozy"];
+  const baseColors = ["#afc8ff", "#ffb884", "#a4e3c1", "#f3a9db", "#f5d590", "#c2b4ff"];
+  const outlineColors = ["#dce6ff", "#ffcc95", "#b4ffe0", "#ffd1f5", "#fff3ab", "#dfd4ff"];
+  const views = [
+    { id:"desk", name:"Mesa", icon:"▱", x:565, y:371, zoom:1.45 },
+    { id:"monitor", name:"Monitor", icon:"▣", x:602, y:286, zoom:2.25 },
+    { id:"window", name:"Janela", icon:"⊞", x:285, y:193, zoom:2.3 },
+    { id:"shelf", name:"Estante", icon:"▤", x:848, y:147, zoom:2.4 },
+    { id:"chair", name:"Poltrona", icon:"◒", x:926, y:361, zoom:2.55 },
+    { id:"lights", name:"Luzinhas", icon:"✦", x:548, y:80, zoom:1.35 },
+  ];
+  const presets = [
+    { name:"Agente terminou", icon:"✓", color:"#97e6b6", brightness:.86 },
+    { name:"Notificação", icon:"!", color:"#f7ad77", brightness:.88 },
+    { name:"Horário", icon:"◷", color:"#ffc578", brightness:.67 },
+    { name:"Foco", icon:"◎", color:"#aacfff", brightness:.76 },
+    { name:"Mídia", icon:"▶", color:"#c1a3f8", brightness:.47 },
+    { name:"Trabalho", icon:"▤", color:"#f4dcba", brightness:1 },
+  ];
+  const fixtureURL = "mock/layout-159.json";
+  let fixture;
+  let S = { state:null, layout:null, groups:[], scenes:[], profiles:[], live:false, wsUp:false, frame:null, selected:null, draft:null, editing:false, overlay:null, geometryMock:false, groupsMock:false };
+  let ws, reconnectTimer, reconnectMs = 950, snapshotSerial = 0, pendingFrame = null, busy = false;
+  const pointMap = new Map();
+  const zoneMap = new Map();
+  const ledLayer = $("dots");
+  let sceneGeometry = [], ledScale = 1;
+  const errors = {
+    led_conflict:"Um LED não pode pertencer a duas zonas.",
+    invalid_leds:"Confira os LEDs selecionados.",
+    invalid_mode:"Este modo de luz não é aceito.",
+    invalid_group:"A zona não pôde ser salva.",
+    unknown_group:"Esta zona ainda não existe no perfil.",
+    rate_limited:"Espere um segundo e tente novamente.",
+    invalid_trigger:"Confira a configuração do efeito.",
+    profile_not_found:"Esse perfil não está disponível.",
+    scene_not_found:"Essa cena não está mais disponível."
   };
   class ApiError extends Error {
-    constructor(status, code, message) { super(message); this.status = status; this.code = code; }
+    constructor(status, message) { super(message); this.status = status; }
   }
-  async function api(method, path, body) {
-    const opt = { method, cache: "no-store", headers: { Authorization: "Bearer " + TOKEN } };
-    if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
-    let r;
-    try { r = await fetch("/api/v1" + path, opt); }
-    catch (e) { throw new ApiError(0, "offline", "Sem conexão com o Prismatik. Ele está aberto?"); }
-    const text = await r.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
-    if (r.status === 401) {
-      showLogin("A senha deste painel não vale mais (o Prismatik pode ter gerado outra). Abra de novo pelo Prismatik.");
-      throw new ApiError(401, "unauthorized", "não autorizado");
-    }
-    if (!r.ok) {
-      const e = (data && data.error) || {};
-      const base = ERR[e.code] || "Algo deu errado (código " + r.status + ").";
-      throw new ApiError(r.status, e.code || "http_" + r.status, base + (e.message ? " Detalhe: " + e.message : ""));
-    }
-    return data;
-  }
-
-  // ---------------------------------------------------------------------------
-  // state
-  const S = {
-    state: null, layout: null, profiles: [],
-    groups: [], saved: "[]", undo: [], open: null, groupsConflict: false,
-    sel: new Set(), last: null,
-    overlays: [], frame: null,
-    tab: "inicio", stages: {},
-    scenes: [], scenesSaved: "[]", scEdit: null, scenesConflict: false, srcFilter: "*", wiz: null,
-  };
-  const TABS = ["inicio", "zonas", "modos", "gatilhos"];
-  const KNOWN_SOURCES = ["claude", "chatgpt", "whatsapp", "sistema"];
-  const PALETTE = ["#ff9f1c", "#2ec4b6", "#e71d36", "#a06cd5", "#3a86ff", "#8ac926", "#ff70a6", "#ffd60a", "#00b4d8", "#f15bb5"];
-  const groupColor = (gi) => PALETTE[gi % PALETTE.length];
-  const ledCount = () => (S.layout && S.layout.leds ? S.layout.leds.length : 0);
-
-  // ---------------------------------------------------------------------------
-  // screens
-  function showLogin(why) {
+  function showLogin() {
     TOKEN = "";
     session.del(TOKEN_KEY);
-    if (ws) { try { ws.onclose = null; ws.close(); } catch (e) { /* ignore */ } ws = null; }
-    $("app").hidden = true;
-    document.querySelector(".tabs").hidden = true;
-    $("login").hidden = false;
-    $("loginWhy").textContent = why || "";
-    setConn(false);
+    clearTimeout(reconnectTimer);
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    S.live = S.wsUp = false;
+    S.frame = pendingFrame = null;
+    updateConnection("Acesso expirado. Reabra pelo Prismatik.");
   }
-  function showApp() {
-    $("login").hidden = true;
-    $("app").hidden = false;
-    document.querySelector(".tabs").hidden = false;
-  }
-  function setConn(on) {
-    const d = $("conn");
-    d.className = "dot " + (on ? "on" : "off");
-    d.title = on ? "Conectado ao Prismatik" : "Sem conexão com o Prismatik";
-    if (!on) $("fps").textContent = "desconectado";
-  }
-  function selectTab(name) {
-    if (S.wiz && name !== "zonas") wizEnd();
-    S.tab = name;
-    syncFrameSubscription();
-    local.set("prismatik.tab", name);
-    for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === name));
-    for (const s of TABS) $("tab-" + s).hidden = s !== name;
-    drawFrame();
-    if (name === "gatilhos") { renderPolicy(); renderOverlays(); }
-    if (name === "modos") renderScenes();
-  }
-
-  // ---------------------------------------------------------------------------
-  // basic mode
-  let brightnessDragging = false;
-  let profileRevision = 0;
-  let groupsRequest = 0, scenesRequest = 0;
-  const profileDrafts = new Map();
-
-  function switchEditorProfile(previous, next) {
-    if (previous && (isDirty() || scenesDirty() || S.undo.length)) {
-      profileDrafts.set(previous, {
-        groups: S.groups, saved: S.saved, undo: S.undo, open: S.open, groupsConflict: S.groupsConflict,
-        scenes: S.scenes, scenesSaved: S.scenesSaved, scEdit: S.scEdit, scenesConflict: S.scenesConflict,
-      });
+  async function api(method, path, body, { ifMatch, withVersion = false } = {}) {
+    if (simulation) throw new ApiError(0, "A API está desativada na simulação [mock].");
+    const opt = { method, cache:"no-store", headers:{ Authorization:"Bearer " + TOKEN }, signal:AbortSignal.timeout(12000) };
+    if (ifMatch) opt.headers["If-Match"] = ifMatch;
+    if (body !== undefined) {
+      opt.headers["Content-Type"] = "application/json";
+      opt.body = JSON.stringify(body);
     }
-    if (S.wiz) wizEnd();
-    Object.assign(S, {
-      groups: [], saved: "[]", undo: [], open: null, groupsConflict: false,
-      scenes: [], scenesSaved: "[]", scEdit: null, scenesConflict: false,
-    }, profileDrafts.get(next));
-    profileDrafts.delete(next);
-    S.groupsProfile = next;
-    S.sel.clear();
-    S.last = null;
-    profileRevision++;
-    afterChange();
-    renderScenes();
-    renderPolicy();
-  }
-  function applyState(st) {
-    const prevProfile = S.state && S.state.profile;
-    S.state = Object.assign(S.state || {}, st);
-    $("on").checked = !!S.state.on;
-    if (!brightnessDragging) {
-      $("brightness").value = S.state.brightness;
-      $("brightnessOut").textContent = S.state.brightness + "%";
+    let r;
+    try { r = await fetch("/api/v1" + path, opt); }
+    catch { throw new ApiError(0, "Sem resposta do Prismatik. Tente novamente."); }
+    const data = await r.json().catch(() => null);
+    if (r.status === 401) {
+      showLogin();
+      throw new ApiError(401, "Acesso expirado. Reabra pelo Prismatik.");
     }
-    renderProfiles();
-    $("deviceInfo").textContent = [S.state.device, S.state.led_count ? S.state.led_count + " LEDs" : "", S.state.version ? "versão " + S.state.version : ""].filter(Boolean).join(" · ");
-    $("groupsProfile").textContent = "“" + S.state.profile + "”";
-    if (prevProfile !== S.state.profile) {
-      switchEditorProfile(prevProfile, S.state.profile);
-      if (prevProfile) onProfileSwitchedSoon();
+    if (!r.ok) {
+      const code = data?.error?.code;
+      const message = errors[code] || data?.error?.message || "O Prismatik retornou o código " + r.status + ".";
+      throw new ApiError(r.status, r.status === 409 ? "Conflito: " + message : message);
     }
-    renderModeBtns();
+    return withVersion ? { data, etag:r.headers.get("ETag") } : data;
   }
-  function renderProfiles() {
-    const sel = $("profile");
-    const names = S.profiles.length ? S.profiles : (S.state ? [S.state.profile] : []);
-    if (sel.options.length !== names.length || [...sel.options].some((o, i) => o.value !== names[i])) {
-      sel.textContent = "";
-      for (const n of names) sel.append(el("option", { value: n }, n));
-    }
-    if (S.state) sel.value = S.state.profile;
-  }
-  async function onProfileSwitched() {
-    const revision = profileRevision;
-    try {
-      const layout = await api("GET", "/layout");
-      if (revision !== profileRevision) return;
-      S.layout = layout;
-      buildStages();
-    } catch (e) { if (e.status !== 401 && revision === profileRevision) toast(e.message, true); }
-    if (revision === profileRevision)
-      await Promise.all([loadGroups({ preserve: true }), loadScenes({ preserve: true })]);
-  }
-  // the switch happens in the app a moment after the request: wait before reading layout/groups
-  const onProfileSwitchedSoon = debounce(onProfileSwitched, 500);
-  const sendBrightness = debounce(async (v) => {
-    try { await api("PATCH", "/state", { brightness: v }); } catch (e) { toast(e.message, true); }
-    brightnessDragging = false;
-  }, 150);
-
-  const QUICK = {
-    whats: { id: "painel-whats", target: { all: true }, effect: { type: "pulse", color: "#25d366", period_ms: 700, count: 3 }, priority: 70 },
-    pulse: { id: "painel-pulso", target: { all: true }, effect: { type: "pulse", color: "#ff6a00", period_ms: 900, count: 3 }, priority: 70 },
-    wave: { id: "painel-onda", target: { all: true }, effect: { type: "wave", color: "#2a7bff", period_ms: 1500, width: 0.3 }, duration_ms: 4500, priority: 70 },
-    rainbow: { id: "painel-arcoiris", target: { all: true }, effect: { type: "rainbow", period_ms: 3000 }, duration_ms: 5000, priority: 70 },
+  const mk = (tag, attrs = {}, value = "") => {
+    const e = document.createElement(tag);
+    for (const [key,v] of Object.entries(attrs)) e.setAttribute(key, v);
+    e.textContent = value;
+    return e;
   };
-  async function trigger(t) {
-    try {
-      const r = await api("POST", "/trigger", t);
-      if (r && r.suppressed) toast("O modo atual silenciou este aviso (origem fora da lista ou prioridade baixa demais).", true);
-    } catch (e) { toast(e.message, true); }
-  }
-  async function stopOverlay(id) {
-    try { await api("DELETE", "/trigger/" + encodeURIComponent(id)); }
-    catch (e) { toast(e.message, true); }
-    setTimeout(loadOverlays, 400);
-  }
-
-  // ---------------------------------------------------------------------------
-  // LED drawing (monitor + desk, positions from /layout)
-  function computeGeometry() {
-    const L = S.layout;
-    const leds = (L && L.leds) || [];
-    if (!leds.length) return null;
-    const c = leds.map((l) => ({ i: l.index, x: l.x + l.w / 2, y: l.y + l.h / 2, enabled: l.enabled !== false }));
-    // the screen holding most zones; else the bounding box of the zones
-    let scr = null, best = 0;
-    for (const s of (L.screens || [])) {
-      const n = c.filter((p) => p.x >= s.x && p.x <= s.x + s.w && p.y >= s.y && p.y <= s.y + s.h).length;
-      if (n > best) { best = n; scr = s; }
-    }
-    if (!scr) {
-      const xs = leds.map((l) => l.x), ys = leds.map((l) => l.y);
-      const x0 = Math.min(...xs), y0 = Math.min(...ys);
-      const x1 = Math.max(...leds.map((l) => l.x + l.w)), y1 = Math.max(...leds.map((l) => l.y + l.h));
-      scr = { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
-    }
-    // nearest edge, then majority over neighbours in strip order (fixes corner zones)
-    const raw = c.map((p) => {
-      const d = { l: p.x - scr.x, r: scr.x + scr.w - p.x, t: p.y - scr.y, b: scr.y + scr.h - p.y };
-      return Object.keys(d).reduce((a, k) => (d[k] < d[a] ? k : a), "l");
-    });
-    const side = raw.map((s, i) => {
-      const votes = {};
-      for (let k = -2; k <= 2; k++) { const v = raw[i + k]; if (v) votes[v] = (votes[v] || 0) + 1; }
-      return Object.keys(votes).reduce((a, k) => (votes[k] > votes[a] ? k : a), s);
-    });
-    const counts = { l: 0, r: 0, t: 0, b: 0 };
-    side.forEach((s) => counts[s]++);
-    const len = { l: scr.h, r: scr.h, t: scr.w, b: scr.w };
-    // dot size per side: as big as the spacing on that side allows
-    const rMax = Math.min(scr.w, scr.h) / 40;
-    const rSide = {};
-    for (const k in counts) rSide[k] = counts[k] >= 2 ? clamp((len[k] / counts[k]) * 0.42, 4, rMax) : rMax;
-    const r = Math.max(rSide.l, rSide.r, rSide.t, rSide.b);
-    const gap = r * 2.5;
-    const deskTop = scr.y + scr.h + scr.h * 0.16;
-    const deskH = Math.max(scr.h * 0.12, r * 5);
-    const desk = { x: scr.x - scr.w * 0.06, y: deskTop, w: scr.w * 1.12, h: deskH };
-    const pos = [];
-    c.forEach((p, k) => {
-      const x = clamp(p.x, scr.x, scr.x + scr.w), y = clamp(p.y, scr.y, scr.y + scr.h);
-      let q;
-      switch (side[k]) {
-        case "l": q = { x: scr.x - gap, y }; break;
-        case "r": q = { x: scr.x + scr.w + gap, y }; break;
-        case "t": q = { x, y: scr.y - gap }; break;
-        default: q = { x, y: deskTop + deskH * 0.45 };
-      }
-      const rr = rSide[side[k]];
-      pos[p.i] = { x: q.x, y: q.y, r: rr, enabled: p.enabled, hit: Math.max(rr, (len[side[k]] / Math.max(1, counts[side[k]])) * 0.5) };
-    });
-    const pad = r * 4;
-    const vb = {
-      x: Math.min(desk.x, scr.x - gap - r) - pad,
-      y: scr.y - gap - r - pad,
-    };
-    vb.w = Math.max(desk.x + desk.w, scr.x + scr.w + gap + r) + pad - vb.x;
-    vb.h = desk.y + desk.h + pad - vb.y;
-    return { scr, desk, pos, r, vb, side };
-  }
-
-  function buildStage(container, editable) {
-    container.textContent = "";
-    const g = computeGeometry();
-    if (!g) { container.append(el("p", { class: "empty" }, "Nenhum LED configurado neste perfil.")); return null; }
-    const { scr, desk, pos, r, vb } = g;
-    if (editable) S.sides = g.side;
-    const svg = svgEl("svg", { viewBox: [vb.x, vb.y, vb.w, vb.h].map((v) => v.toFixed(1)).join(" "), role: "img",
-      "aria-label": "Desenho do monitor e da mesa com os LEDs" });
-    const fs = (scr.h * 0.05).toFixed(1);
-    svg.append(svgEl("rect", { class: "desk", x: desk.x, y: desk.y, width: desk.w, height: desk.h, rx: desk.h * 0.15 }));
-    svg.append(svgEl("rect", { class: "monitor", x: scr.x + scr.w * 0.46, y: scr.y + scr.h, width: scr.w * 0.08, height: desk.y - scr.y - scr.h }));
-    svg.append(svgEl("rect", { class: "monitor", x: scr.x, y: scr.y, width: scr.w, height: scr.h, rx: r }));
-    const t1 = svgEl("text", { class: "label", x: scr.x + scr.w / 2, y: scr.y + scr.h / 2, "text-anchor": "middle", "font-size": fs });
-    t1.textContent = "Monitor";
-    const t2 = svgEl("text", { class: "label", x: desk.x + desk.w / 2, y: desk.y + desk.h * 0.92, "text-anchor": "middle", "font-size": (fs * 0.7).toFixed(1) });
-    t2.textContent = "Mesa";
-    svg.append(t1, t2);
-    const els = [];
-    const ledLayer = svgEl("g", {});
-    pos.forEach((p, i) => {
-      if (!p) return;
-      if (editable) ledLayer.append(svgEl("circle", { cx: p.x, cy: p.y, r: p.hit, fill: "transparent", "data-i": i }));
-      const c = svgEl("circle", { class: "led" + (p.enabled ? "" : " off"), cx: p.x, cy: p.y, r: p.r, fill: "#000", "data-i": i });
-      const title = svgEl("title", {});
-      title.textContent = "LED " + (i + 1);
-      c.append(title);
-      ledLayer.append(c);
-      els[i] = c;
-    });
-    svg.append(ledLayer);
-    const band = svgEl("rect", { class: "band", x: 0, y: 0, width: 0, height: 0, visibility: "hidden" });
-    svg.append(band);
-    container.append(svg);
-    const stage = { svg, els, pos, r, band, colors: [] };
-    if (editable) wireEditor(stage);
-    return stage;
-  }
-  function buildStages() {
-    S.stages.preview = buildStage($("previewStage"), false);
-    S.stages.editor = buildStage($("editorStage"), true);
-    paintEditor();
-    drawFrame();
-  }
-
-  let rafPending = false;
-  function onFrame(b64) {
-    if (!wantsFrames() || typeof b64 !== "string") return;
-    S.frame = b64;
-    if (!rafPending) { rafPending = true; requestAnimationFrame(() => { rafPending = false; drawFrame(); }); }
-  }
-  function drawFrame() {
-    const stage = S.tab === "inicio" ? S.stages.preview : S.tab === "zonas" ? S.stages.editor : null;
-    if (!stage || !S.frame || document.hidden) return;
-    let frame;
-    try { frame = atob(S.frame); } catch (e) { return; }
-    for (let i = 0; i < stage.els.length; i++) {
-      const c = stage.els[i];
-      if (!c) continue;
-      const offset = i * 3;
-      const color = offset + 2 < frame.length ? frame.slice(offset, offset + 3) : "";
-      if (stage.colors[i] === color) continue;
-      stage.colors[i] = color;
-      c.setAttribute("fill", color ? "rgb(" + color.charCodeAt(0) + "," + color.charCodeAt(1) + "," + color.charCodeAt(2) + ")" : "#000");
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // zone editor: selection
-  function svgPoint(svg, ev) {
-    const pt = svg.createSVGPoint();
-    pt.x = ev.clientX; pt.y = ev.clientY;
-    return pt.matrixTransform(svg.getScreenCTM().inverse());
-  }
-  function wireEditor(stage) {
-    const { svg, band, pos } = stage;
-    let drag = null;
-    svg.addEventListener("pointerdown", (ev) => {
-      if (ev.button !== 0) return;
-      const t = ev.target.closest("[data-i]");
-      const p = svgPoint(svg, ev);
-      drag = { x0: p.x, y0: p.y, sx: ev.clientX, sy: ev.clientY, idx: t ? +t.dataset.i : null, moved: false,
-        add: ev.ctrlKey || ev.metaKey || $("addMode").checked, shift: ev.shiftKey, base: new Set(S.sel) };
-      try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
-      ev.preventDefault();
-    });
-    svg.addEventListener("pointermove", (ev) => {
-      if (!drag) return;
-      if (!drag.moved && Math.hypot(ev.clientX - drag.sx, ev.clientY - drag.sy) < 6) return;
-      drag.moved = true;
-      const p = svgPoint(svg, ev);
-      const x = Math.min(drag.x0, p.x), y = Math.min(drag.y0, p.y), w = Math.abs(p.x - drag.x0), h = Math.abs(p.y - drag.y0);
-      band.setAttribute("x", x); band.setAttribute("y", y); band.setAttribute("width", w); band.setAttribute("height", h);
-      band.setAttribute("visibility", "visible");
-      const inside = new Set(drag.add || drag.shift ? drag.base : []);
-      pos.forEach((q, i) => { if (q && q.x >= x && q.x <= x + w && q.y >= y && q.y <= y + h) inside.add(i); });
-      S.sel = inside;
-      paintEditor();
-    });
-    const finish = (ev, cancelled) => {
-      if (!drag) return;
-      band.setAttribute("visibility", "hidden");
-      if (!drag.moved && !cancelled) {
-        const i = drag.idx;
-        if (i === null) {
-          if (!drag.add && !drag.shift) S.sel.clear();
-        } else if (drag.shift && S.last !== null && S.last !== undefined) {
-          const a = Math.min(S.last, i), b = Math.max(S.last, i);
-          for (let k = a; k <= b; k++) S.sel.add(k);
-          S.last = i;
-        } else if (drag.add) {
-          if (S.sel.has(i)) S.sel.delete(i); else S.sel.add(i);
-          S.last = i;
-        } else {
-          S.sel = new Set([i]);
-          S.last = i;
-        }
-      }
-      drag = null;
-      paintEditor();
-    };
-    svg.addEventListener("pointerup", (ev) => finish(ev, false));
-    svg.addEventListener("pointercancel", (ev) => finish(ev, true));
-    svg.addEventListener("dblclick", (ev) => {
-      const t = ev.target.closest("[data-i]");
-      if (!t) return;
-      const gi = ownerOf(+t.dataset.i);
-      if (gi < 0) return;
-      selectGroup(gi, ev.ctrlKey || ev.metaKey || $("addMode").checked);
-    });
-  }
-  function selectGroup(gi, add) {
-    if (!add) S.sel.clear();
-    for (const i of groupIndices(S.groups[gi])) S.sel.add(i);
-    paintEditor();
-  }
-  let ownerCache = null;
-  function owners() {
-    if (ownerCache) return ownerCache;
-    const n = ledCount();
-    ownerCache = new Array(n).fill(-1);
-    S.groups.forEach((g, gi) => { for (const i of groupIndices(g)) if (i >= 0 && i < n) ownerCache[i] = gi; });
-    return ownerCache;
-  }
-  const ownerOf = (i) => owners()[i] ?? -1;
-
-  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
-  function paintEditor() {
-    const stage = S.stages.editor;
-    updateSelInfo();
-    if (!stage) return;
-    const accent = cssVar("--accent") || "#2a6cf0";
-    const line = cssVar("--line") || "#888";
-    const own = owners();
-    stage.els.forEach((c, i) => {
-      if (!c) return;
-      const r = stage.pos[i].r;
-      if (S.sel.has(i)) { c.setAttribute("stroke", accent); c.setAttribute("stroke-width", r * 0.8); }
-      else if (own[i] >= 0) { c.setAttribute("stroke", groupColor(own[i])); c.setAttribute("stroke-width", r * 0.5); }
-      else { c.setAttribute("stroke", line); c.setAttribute("stroke-width", r * 0.25); }
-    });
-  }
-  function updateSelInfo() {
-    const n = S.sel.size;
-    $("selInfo").textContent = n ? n + (n === 1 ? " LED escolhido: " : " LEDs escolhidos: ") + rangesText([...S.sel]) : "Nenhum LED escolhido.";
-    $("newGroup").disabled = !n;
-  }
-
-  // ---------------------------------------------------------------------------
-  // groups (draft edited locally, applied with "Aplicar na fita")
-  function groupIndices(g) {
-    const leds = (g && g.leds) || {};
-    const n = ledCount();
+  const svg = (tag, attrs = {}) => {
+    const e = document.createElementNS(NS, tag);
+    for (const [key,v] of Object.entries(attrs)) e.setAttribute(key, v);
+    return e;
+  };
+  const button = (label, click, attrs = {}) => {
+    const b = mk("button", { type:"button", ...attrs }, label);
+    b.addEventListener("click", click);
+    return b;
+  };
+  const groupName = (g) => g?.name || g?.id || "";
+  const sceneID = (v) => typeof v === "object" ? v?.id : v;
+  const groupRoute = (profile = S.state.profile) => "/profiles/" + encodeURIComponent(profile) + "/groups";
+  const stateNow = () => S.state || {};
+  const groupIds = (g) => {
+    const leds = g?.leds || {};
+    return sceneGeometry.map((p) => p.index).filter((i) =>
+      leds.all || leds.list?.includes(i) || leds.ranges?.some(([a,b]) => i >= a && i <= b));
+  };
+  function toRanges(indices) {
     const out = [];
-    if (leds.all) { for (let i = 0; i < n; i++) out.push(i); return out; }
-    for (const r of leds.ranges || []) if (Array.isArray(r) && r.length === 2) for (let i = r[0]; i <= r[1]; i++) out.push(i);
-    for (const i of leds.list || []) out.push(i);
+    for (const i of [...new Set(indices)].sort((a,b) => a-b)) {
+      const last = out.at(-1);
+      if (last && i === last[1]+1) last[1] = i;
+      else out.push([i,i]);
+    }
     return out;
   }
-  function setGroupIndices(g, indices) { g.leds = { ranges: toRanges(indices) }; }
-  const nameOf = (g) => g.name || g.id;
-  function slug(s) {
-    const base = String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
-      .replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 34);
-    return base || "grupo";
+  const quietHex = (c, fallback) => /^#[a-f0-9]{6}$/i.test(c || "") ? c : fallback;
+  const deskWord = /(?:^|[\s_-])(desk|mesa|table)(?:$|[\s_-])/i;
+  const monitorWord = /monitor|tela|screen/i;
+  function areaOfGroup(g) {
+    const name = g.id + " " + groupName(g);
+    if (deskWord.test(name)) return "desk";
+    if (monitorWord.test(name)) return "monitor";
+    return views.find((v) => v.id === g.id || normalized(v.name) === normalized(groupName(g)))?.id;
   }
-  function uniqueId(base) {
-    const ids = new Set(S.groups.map((g) => g.id));
-    if (!ids.has(base)) return base;
-    for (let k = 2; ; k++) if (!ids.has(base + "-" + k)) return base + "-" + k;
+  function normalized(s) { return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase(); }
+  const baseRect = { x:0,y:0,w:1100,h:510 };
+  const camera = { ...baseRect };
+  let cameraAnimation = 0, activeView = "", drag = null, orderPick = null;
+  const pointers = new Map();
+  function clientPoint(x, y) {
+    const p = new DOMPoint(x,y);
+    return p.matrixTransform(room.getScreenCTM().inverse());
   }
-  function nextName() {
-    const names = new Set(S.groups.map(nameOf));
-    for (let k = S.groups.length + 1; ; k++) if (!names.has("Grupo " + k)) return "Grupo " + k;
+  function fitView(x,y,zoom) {
+    const w = baseRect.w/zoom, h = baseRect.h/zoom;
+    return { x:clamp(x-w/2,0,baseRect.w-w), y:clamp(y-h/2,0,baseRect.h-h), w,h };
   }
-  // removes the LEDs from every group except `keep`; empty groups disappear
-  function takeFromOthers(indices, keep) {
-    const take = new Set(indices);
-    const notes = [];
-    S.groups = S.groups.filter((g) => {
-      if (g === keep) return true;
-      const before = groupIndices(g);
-      const after = before.filter((i) => !take.has(i));
-      if (after.length === before.length) return true;
-      if (!after.length) { notes.push("o grupo “" + nameOf(g) + "” ficou vazio e foi removido"); return false; }
-      setGroupIndices(g, after);
-      notes.push((before.length - after.length) + " LED(s) saíram de “" + nameOf(g) + "”");
-      return true;
-    });
-    return notes;
+  function showCamera(v) {
+    Object.assign(camera,v);
+    room.setAttribute("viewBox", [v.x,v.y,v.w,v.h].join(" "));
+    const box = room.getBoundingClientRect();
+    ledScale = 1 / (room.getScreenCTM()?.a || Math.max(box.width/v.w,box.height/v.h) || 1);
+    room.dataset.zoomed = String(v.w < baseRect.w-.1);
+    updateDotSizes();
+    placeControls();
   }
-  const isDirty = () => JSON.stringify(S.groups) !== S.saved;
-  function mutate(fn) {
-    S.undo.push(JSON.stringify(S.groups));
-    if (S.undo.length > 60) S.undo.shift();
-    const notes = fn() || [];
-    afterChange();
-    if (notes.length) toast("Atenção: " + notes.join("; ") + ".");
-  }
-  function afterChange() {
-    ownerCache = null;
-    renderGroups();
-    paintEditor();
-    updateSaveBar();
-    renderTargetOptions();
-    renderDeskSides();
-  }
-  function updateSaveBar() {
-    const dirty = isDirty();
-    $("savebar").hidden = !dirty && !S.undo.length;
-    $("saveMsg").textContent = dirty && S.groupsConflict ? "As zonas remotas mudaram. Seu rascunho foi mantido."
-      : dirty ? "Há mudanças ainda não aplicadas na fita." : "Tudo aplicado.";
-    $("save").disabled = !dirty;
-    $("discard").disabled = !dirty;
-    $("undo").disabled = !S.undo.length;
-  }
-  async function loadGroups({ preserve = true, retry = false } = {}) {
-    if (!S.state) return;
-    const profile = S.state.profile;
-    const revision = profileRevision;
-    const request = ++groupsRequest;
-    const current = () => revision === profileRevision && request === groupsRequest;
-    try {
-      const g = await api("GET", "/profiles/" + encodeURIComponent(profile) + "/groups");
-      if (!current()) return;
-      const groups = Array.isArray(g) ? g : [];
-      const saved = JSON.stringify(groups);
-      if (preserve && isDirty()) {
-        S.groupsConflict = saved !== S.saved;
-        updateSaveBar();
-      } else if (!preserve || saved !== S.saved) {
-        S.groups = groups;
-        S.saved = saved;
-        S.groupsConflict = false;
-        S.undo = [];
-        afterChange();
-      }
-    } catch (e) {
-      if (!current()) return;
-      if (retry) throw e;
-      if (e.status !== 401) toast(e.message, true);
-    }
-  }
-  async function saveGroups() {
-    for (const g of S.groups) if (!groupIndices(g).length) { toast("O grupo “" + nameOf(g) + "” está sem LEDs. Escolha LEDs para ele ou apague.", true); return; }
-    if (S.groupsConflict && !confirm("As zonas remotas mudaram. Substituir as zonas remotas pelo rascunho?")) return;
-    const revision = profileRevision;
-    const submitted = JSON.stringify(S.groups);
-    ++groupsRequest;
-    $("save").disabled = true;
-    try {
-      const res = await api("PUT", "/profiles/" + encodeURIComponent(S.groupsProfile || S.state.profile) + "/groups", JSON.parse(submitted));
-      if (revision !== profileRevision) return;
-      ++groupsRequest;
-      const saved = Array.isArray(res) ? res : JSON.parse(submitted);
-      if (JSON.stringify(S.groups) === submitted) S.groups = saved;
-      S.saved = JSON.stringify(saved);
-      S.groupsConflict = false;
-      afterChange();
-      toast("Pronto! As mudanças já estão na fita.");
-    } catch (e) {
-      toast(e.message, true);
-      updateSaveBar();
-    }
-  }
-
-  const MODES = [
-    ["source", "Seguir a tela", "Copia as cores da tela que ficam perto desses LEDs."],
-    ["solid", "Cor fixa", "Uma cor só, parada. Bom para luz de ambiente na mesa."],
-    ["gradient", "Degradê", "Passa de uma cor para outra ao longo do grupo."],
-    ["breathe", "Respirar (efeito)", "Acende e apaga devagar, como uma respiração."],
-    ["rainbow", "Arco-íris (efeito)", "As cores do arco-íris andando pela fita."],
-    ["off", "Apagado", "Esses LEDs ficam desligados."],
-  ];
-  const modeLabel = (t) => { const m = MODES.find((x) => x[0] === (t === "screen" ? "source" : t)); return m ? m[1] : t; };
-  function defaultMode(type, old, gi) {
-    const color = (old && old.color) || groupColor(gi);
-    switch (type) {
-      case "solid": return { type, color, brightness: 1 };
-      case "gradient": return { type, brightness: 1, stops: [{ at: 0, color: "#ff6a00" }, { at: 1, color: "#7a00ff" }] };
-      case "breathe": return { type, color, period_ms: 4000, min: 0.1, brightness: 1 };
-      case "rainbow": return { type, period_ms: 8000, brightness: 1 };
-      default: return { type };
-    }
-  }
-
-  function slider(label, value, min, max, step, fmt, onCommit, hint) {
-    const out = el("output", {}, fmt(value));
-    const input = el("input", { type: "range", min, max, step, value });
-    input.addEventListener("input", () => { out.textContent = fmt(+input.value); });
-    input.addEventListener("change", () => onCommit(+input.value));
-    return el("label", { class: "field" }, el("span", {}, el("b", {}, label), " ", out), input, hint ? el("small", { class: "muted" }, hint) : null);
-  }
-  function colorField(label, value, onCommit) {
-    const input = el("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(value || "") ? value : "#ffffff" });
-    input.addEventListener("change", () => onCommit(input.value));
-    return el("label", { class: "field" }, el("span", {}, el("b", {}, label)), input);
-  }
-  const pct = (v) => Math.round(v) + "%";
-  const secs = (v) => (v / 1000).toFixed(1).replace(".", ",") + " s";
-
-  function modeParams(g, gi, apply) {
-    const m = g.mode || { type: "source" };
-    const run = apply || mutate;
-    const set = (patch) => run(() => { g.mode = Object.assign({}, g.mode, patch); });
-    const box = el("div", { class: "grid" });
-    const bright = () => slider("Brilho do grupo", Math.round((m.brightness ?? 1) * 100), 0, 100, 1, pct, (v) => set({ brightness: v / 100 }));
-    switch (m.type) {
-      case "solid":
-        box.append(colorField("Cor", m.color, (v) => set({ color: v })), bright());
-        break;
-      case "gradient": {
-        const stops = (m.stops && m.stops.length >= 2) ? m.stops : [{ at: 0, color: "#ff6a00" }, { at: 1, color: "#7a00ff" }];
-        const row = el("div", { class: "stops" });
-        const commit = (colors) => set({ stops: colors.map((c, k) => ({ at: +(k / (colors.length - 1)).toFixed(3), color: c })) });
-        const colors = stops.map((s) => s.color);
-        colors.forEach((c, k) => {
-          const input = el("input", { type: "color", value: c, title: k === 0 ? "Começo" : k === colors.length - 1 ? "Fim" : "Meio" });
-          input.addEventListener("change", () => { const next = colors.slice(); next[k] = input.value; commit(next); });
-          row.append(input);
-        });
-        if (colors.length < 5) row.append(el("button", { type: "button", onclick: () => { const next = colors.slice(); next.splice(next.length - 1, 0, "#ffffff"); commit(next); } }, "+ cor"));
-        if (colors.length > 2) row.append(el("button", { type: "button", onclick: () => { const next = colors.slice(); next.splice(next.length - 2, 1); commit(next); } }, "− cor"));
-        box.append(el("div", { class: "field" }, el("span", {}, el("b", {}, "Cores (do começo ao fim do grupo)")), row,
-          el("small", { class: "muted" }, "O começo é o LED de número menor.")), bright());
-        break;
-      }
-      case "breathe":
-        box.append(colorField("Cor", m.color, (v) => set({ color: v })),
-          slider("Velocidade (um ciclo)", m.period_ms || 4000, 1000, 15000, 250, secs, (v) => set({ period_ms: v }), "Menor = mais rápido."),
-          slider("Brilho mínimo", Math.round((m.min ?? 0.1) * 100), 0, 90, 1, pct, (v) => set({ min: v / 100 })),
-          bright());
-        break;
-      case "rainbow":
-        box.append(slider("Velocidade (uma volta)", m.period_ms || 8000, 1000, 60000, 500, secs, (v) => set({ period_ms: v }), "Menor = mais rápido."), bright());
-        break;
-      case "source":
-      case "screen":
-        box.append(bright());
-        break;
-      default:
-        break;
-    }
-    return box;
-  }
-
-  function renderGroups() {
-    const box = $("groups");
-    box.textContent = "";
-    if (!S.groups.length) {
-      box.append(el("p", { class: "empty" }, "Nenhum grupo ainda. Escolha LEDs no desenho e clique em “Criar grupo com os escolhidos”."));
+  function goCamera(v, animated = true) {
+    cancelAnimationFrame(cameraAnimation);
+    cameraAnimation = 0;
+    if (!animated || reducedMotion.matches || document.hidden) {
+      showCamera(v);
       return;
     }
-    S.groups.forEach((g, gi) => {
-      const idx = groupIndices(g);
-      const open = S.open === g.id;
-      const head = el("header", { onclick: () => { S.open = open ? null : g.id; renderGroups(); } },
-        el("span", { class: "chip", style: "background:" + groupColor(gi) }),
-        el("span", { class: "name" }, nameOf(g)),
-        el("span", { class: "meta" }, idx.length + " LEDs · " + (idx.length ? rangesText(idx, 4) : "sem LEDs") + " · " + modeLabel((g.mode || {}).type)),
-        el("span", { class: "spacer" }),
-        el("span", { class: "muted small" }, open ? "▲ fechar" : "▼ editar"));
-      const card = el("div", { class: "group" }, head);
-      if (open) {
-        const nameInput = el("input", { type: "text", value: nameOf(g), maxlength: 60 });
-        nameInput.addEventListener("change", () => {
-          const v = nameInput.value.trim();
-          if (!v) { nameInput.value = nameOf(g); return; }
-          mutate(() => { g.name = v; });
-        });
-        const modeSel = el("select", {});
-        for (const [v, label] of MODES) modeSel.append(el("option", { value: v }, label));
-        const t = (g.mode || {}).type || "source";
-        modeSel.value = t === "screen" ? "source" : t;
-        modeSel.addEventListener("change", () => mutate(() => { g.mode = defaultMode(modeSel.value, g.mode, gi); }));
-        const hint = (MODES.find((x) => x[0] === modeSel.value) || [])[2] || "";
-        const hasSel = S.sel.size > 0;
-        const body = el("div", { class: "body" },
-          el("div", { class: "grid" },
-            el("label", { class: "field" }, el("span", {}, el("b", {}, "Nome")), nameInput,
-              el("small", { class: "muted" }, "Código usado pelos gatilhos: ", el("code", {}, g.id))),
-            el("label", { class: "field" }, el("span", {}, el("b", {}, "Como acende")), modeSel, el("small", { class: "muted" }, hint))),
-          modeParams(g, gi),
-          el("div", { class: "actions" },
-            el("button", { type: "button", onclick: () => selectGroup(gi, false) }, "Mostrar os LEDs dele"),
-            el("button", { type: "button", disabled: !hasSel, title: "Os LEDs escolhidos passam a ser os deste grupo",
-              onclick: () => mutate(() => { const sel = [...S.sel]; const notes = takeFromOthers(sel, g); setGroupIndices(g, sel); return notes; }) }, "Trocar pelos escolhidos"),
-            el("button", { type: "button", disabled: !hasSel,
-              onclick: () => mutate(() => { const sel = [...S.sel]; const notes = takeFromOthers(sel, g); setGroupIndices(g, groupIndices(g).concat(sel)); return notes; }) }, "Somar os escolhidos"),
-            el("button", { type: "button", disabled: !hasSel,
-              onclick: () => mutate(() => { setGroupIndices(g, groupIndices(g).filter((i) => !S.sel.has(i))); }) }, "Tirar os escolhidos"),
-            el("button", { type: "button", title: "Pisca esses LEDs em branco para você achar na fita",
-              onclick: () => idx.length && trigger({ id: "painel-achar", target: { leds: { ranges: toRanges(idx) } }, effect: { type: "flash", color: "#ffffff", period_ms: 400, count: 3 }, priority: 90, blend: "override" }) }, "Piscar na fita"),
-            el("span", { class: "spacer" }),
-            el("button", { type: "button", class: "danger",
-              onclick: () => { if (confirm("Apagar o grupo “" + nameOf(g) + "”? Os LEDs dele voltam a seguir o modo do perfil.")) mutate(() => { S.groups.splice(gi, 1); }); } }, "Apagar grupo")));
-        card.append(body);
-      }
-      box.append(card);
-    });
-  }
-
-  function createGroupFromSelection() {
-    if (!S.sel.size) { toast("Escolha alguns LEDs no desenho primeiro.", true); return; }
-    let newId = null;
-    mutate(() => {
-      const sel = [...S.sel];
-      const notes = takeFromOthers(sel, null);
-      const name = nextName();
-      newId = uniqueId(slug(name));
-      const gi = S.groups.length;
-      const g = { id: newId, name, leds: { ranges: toRanges(sel) }, mode: defaultMode("solid", null, gi) };
-      S.groups.push(g);
-      S.open = newId;
-      return notes;
-    });
-    toast("Grupo criado. Dê um nome, escolha a cor e clique em “Aplicar na fita”.");
-    const input = document.querySelector("#groups .group .body input[type=text]");
-    if (input) { input.focus(); input.select(); }
-  }
-
-  // ---------------------------------------------------------------------------
-  // individual colour: one LED / one side with its own colour = a small group ("cor-*"), never a permanent overlay
-  const ORIGIN_KEY = "prismatik.ledOrigin";
-  function readOrigins() {
-    const all = safe(() => JSON.parse(local.get(ORIGIN_KEY) || "{}"), {}) || {};
-    return all[S.groupsProfile || (S.state && S.state.profile) || ""] || {};
-  }
-  function writeOrigins(map) {
-    const all = safe(() => JSON.parse(local.get(ORIGIN_KEY) || "{}"), {}) || {};
-    all[S.groupsProfile || (S.state && S.state.profile) || ""] = map;
-    local.set(ORIGIN_KEY, JSON.stringify(all));
-  }
-  const isColorGroup = (g) => /^cor-/.test(g.id);
-  function selectByPredicate(fn) {
-    const out = new Set();
-    for (let i = 0; i < ledCount(); i++) if (fn(i)) out.add(i);
-    S.sel = out;
-    paintEditor();
-  }
-  function renderDeskSides() {
-    const box = $("deskSides");
-    if (!box) return;
-    box.textContent = "";
-    for (const [id, label] of [["desk-left", "Mesa: esquerda"], ["desk-center", "Mesa: centro"], ["desk-right", "Mesa: direita"]]) {
-      const gi = S.groups.findIndex((g) => g.id === id);
-      if (gi >= 0) box.append(el("button", { type: "button", onclick: () => selectGroup(gi, false) }, label));
+    const start = performance.now(), origin = { ...camera };
+    function frame(now) {
+      const t = clamp((now-start)/320,0,1), f = 1 - (1-t)**3;
+      const next = Object.fromEntries(Object.keys(v).map((k) => [k,origin[k]+(v[k]-origin[k])*f]));
+      showCamera(next);
+      cameraAnimation = t < 1 ? requestAnimationFrame(frame) : 0;
     }
+    cameraAnimation = requestAnimationFrame(frame);
   }
-  async function applyLedColor() {
-    if (!S.sel.size) { toast("Escolha alguns LEDs no desenho primeiro.", true); return; }
-    const sel = [...S.sel].sort((a, b) => a - b);
-    const color = $("lcColor").value;
-    const origins = readOrigins();
-    const own = owners();
-    for (const i of sel) if (own[i] >= 0 && !isColorGroup(S.groups[own[i]])) origins[i] = S.groups[own[i]].id;
-    writeOrigins(origins);
-    const text = rangesText(sel, 2);
-    mutate(() => {
-      const notes = takeFromOthers(sel, null);
-      const id = uniqueId("cor-" + (sel[0] + 1) + (sel.length > 1 ? "-" + (sel[sel.length - 1] + 1) : ""));
-      S.groups.push({ id, name: (sel.length === 1 ? "Cor do LED " : "Cor dos LEDs ") + text, leds: { ranges: toRanges(sel) }, mode: { type: "solid", color, brightness: 1 } });
-      return notes;
-    });
-    await saveGroups();
+  function zoomAround(factor, point, animated) {
+    const zoom = clamp(baseRect.w/camera.w*factor,1,4);
+    const w = baseRect.w/zoom, h=baseRect.h/zoom;
+    const center = point || { x:camera.x+camera.w/2,y:camera.y+camera.h/2 };
+    activeView = "";
+    markSelections();
+    goCamera(fitView(center.x+(camera.x+camera.w/2-center.x)*w/camera.w,
+      center.y+(camera.y+camera.h/2-center.y)*h/camera.h,zoom),animated);
   }
-  async function clearLedColor() {
-    const own = owners();
-    const hit = [...S.sel].filter((i) => own[i] >= 0 && isColorGroup(S.groups[own[i]]));
-    if (!hit.length) { toast("Nenhum dos LEDs escolhidos tem cor individual.", true); return; }
-    const origins = readOrigins();
-    mutate(() => {
-      const back = new Set(hit);
-      const home = {};
-      for (const i of hit) { const id = origins[i]; if (id && S.groups.some((g) => g.id === id)) (home[id] = home[id] || []).push(i); }
-      S.groups = S.groups.filter((g) => {
-        if (!isColorGroup(g)) return true;
-        const keep = groupIndices(g).filter((i) => !back.has(i));
-        if (!keep.length) return false;
-        setGroupIndices(g, keep);
-        return true;
-      });
-      for (const id in home) { const g = S.groups.find((x) => x.id === id); setGroupIndices(g, groupIndices(g).concat(home[id])); }
-      for (const i of hit) delete origins[i];
-      writeOrigins(origins);
-    });
-    await saveGroups();
+  function setHint(message) { $("hint").textContent = message; }
+  function navigateView(id) {
+    const v = views.find((item) => item.id === id);
+    activeView = id;
+    if (!v) {
+      goCamera(baseRect);
+      markSelections();
+      setHint("");
+      return;
+    }
+    const matching = [...zoneMap.values()].filter((z) => z.section === id);
+    if (matching.length) selectZone(matching.find((z) => z.id === S.selected)?.id || matching[0].id);
+    else { S.selected = null; renderControls(); }
+    markSelections();
+    setHint(matching.length ? v.name : v.name + " · sem LEDs nesta seção");
+    goCamera(fitView(v.x,v.y,v.zoom));
   }
-
-  // ---------------------------------------------------------------------------
-  // "Achar o centro" wizard (desk strip -> desk-left / desk-center / desk-right)
-  // indices are 0-based inside, shown 1-based (like the Prismatik window)
-  const WIZ_FLASH = "painel-centro", WIZ_BAND = "painel-centro-faixa";
-  function wizStart() {
-    const n = ledCount();
-    if (n < 4) { toast("Este perfil não tem LEDs suficientes.", true); return; }
-    const idxOf = (id) => { const g = S.groups.find((x) => x.id === id); return g ? groupIndices(g).sort((a, b) => a - b) : []; };
-    const c = idxOf("desk-center"), l = idxOf("desk-left"), r = idxOf("desk-right");
-    // calibrated on 2026-11-14: desk 71-158 (left = lower number), centre under the monitor 98-131
-    const w = { step: 0, D0: 71, D1: Math.min(158, n - 1), L: 98, R: 131 };
-    if (l.length) w.D0 = l[0];
-    if (r.length) w.D1 = r[r.length - 1];
-    if (c.length) { w.L = c[0]; w.R = c[c.length - 1]; }
-    w.D1 = clamp(w.D1, 2, n - 1);
-    w.D0 = clamp(w.D0, 0, w.D1 - 2);
-    w.L = clamp(w.L, w.D0 + 1, w.D1 - 1);
-    w.R = clamp(w.R, w.L, w.D1 - 1);
-    S.wiz = w;
-    $("wizStart").hidden = true;
-    wizRender();
-  }
-  const wizFlash = debounce(() => {
-    const w = S.wiz;
-    if (!w) return;
-    const base = { effect: { type: "flash", color: "#ffffff", period_ms: 500, count: 0 }, duration_ms: 180000, priority: 95, blend: "override" };
-    if (w.step === 2) trigger(Object.assign({ id: WIZ_FLASH, target: { leds: { ranges: [[w.L, w.L]] } } }, base));
-    else if (w.step === 3) trigger(Object.assign({ id: WIZ_FLASH, target: { leds: { ranges: [[w.R, w.R]] } } }, base));
-    else if (w.step === 4) trigger(Object.assign({ id: WIZ_FLASH, target: { leds: { ranges: [[w.L, w.L], [w.R, w.R]] } } }, base));
-    if (w.step >= 2) trigger({ id: WIZ_BAND, target: { leds: { ranges: [[w.L, w.R]] } }, effect: { type: "solid", color: "#2a7bff" }, duration_ms: 180000, priority: 80, blend: "alpha" });
-  }, 300);
-  async function wizStop() {
-    for (const id of [WIZ_FLASH, WIZ_BAND]) { try { await api("DELETE", "/trigger/" + encodeURIComponent(id)); } catch (e) { /* already gone */ } }
-    setTimeout(loadOverlays, 400);
-  }
-  function wizEnd() {
-    S.wiz = null;
-    $("wiz").hidden = true;
-    $("wiz").textContent = "";
-    $("wizStart").hidden = false;
-    wizStop();
-  }
-  function wizGo(step) { S.wiz.step = step; wizRender(); }
-  function nudge(label, key, lo, hi) {
-    const w = S.wiz;
-    const move = (d) => { w[key] = clamp(w[key] + d, lo(), hi()); wizRender(); };
-    return el("div", { class: "nudge" }, el("b", {}, label),
-      el("button", { type: "button", title: "5 LEDs para a esquerda", onclick: () => move(-5) }, "◀◀"),
-      el("button", { type: "button", title: "1 LED para a esquerda", onclick: () => move(-1) }, "◀"),
-      el("output", {}, String(w[key] + 1)),
-      el("button", { type: "button", title: "1 LED para a direita", onclick: () => move(1) }, "▶"),
-      el("button", { type: "button", title: "5 LEDs para a direita", onclick: () => move(5) }, "▶▶"),
-      el("button", { type: "button", onclick: () => wizFlash() }, "Piscar de novo"));
-  }
-  function wizRender() {
-    const w = S.wiz, box = $("wiz");
-    if (!w) return;
-    box.hidden = false;
-    box.className = "wiz";
-    box.textContent = "";
-    const n = ledCount();
-    const num = (label, key, hint) => {
-      const input = el("input", { type: "number", min: 1, max: n, value: w[key] + 1 });
-      input.addEventListener("change", () => {
-        w[key] = clamp((Math.round(+input.value) || 1) - 1, 0, n - 1);
-        w.D1 = clamp(w.D1, 2, n - 1);
-        w.D0 = clamp(w.D0, 0, w.D1 - 2);
-        w.L = clamp(w.L, w.D0 + 1, w.D1 - 1);
-        w.R = clamp(w.R, w.L, w.D1 - 1);
-        wizRender();
-      });
-      return el("label", { class: "field" }, el("span", {}, el("b", {}, label)), input, el("small", { class: "muted" }, hint));
+  function buildLayout() {
+    const layout = S.layout || { leds:[] };
+    const leds = (layout.leds || []).filter((p) => Number.isInteger(p.index) && p.index >= 0 && [p.x,p.y,p.w,p.h].every(Number.isFinite));
+    if (!leds.length) { sceneGeometry = []; return; }
+    const deskCodes = new Set();
+    for (const g of S.groups.filter((g) => areaOfGroup(g) === "desk")) {
+      for (const p of leds) if (g.leds?.all || g.leds?.list?.includes(p.index) || g.leds?.ranges?.some(([a,b]) => p.index >= a && p.index <= b)) deskCodes.add(p.index);
+    }
+    const centers = leds.map((p) => ({ ...p, cx:p.x+p.w/2, cy:p.y+p.h/2 }));
+    const isDesk = (p) => p.section === "desk" || deskCodes.has(p.index);
+    const main = centers.filter((p) => !isDesk(p));
+    const ranked = (layout.screens || []).map((scr) => ({ ...scr, count:main.filter((p) =>
+      p.cx >= scr.x && p.cx <= scr.x+scr.w && p.cy >= scr.y && p.cy <= scr.y+scr.h).length })).sort((a,b) => b.count-a.count);
+    const bounding = (points) => {
+      const x = Math.min(...points.map((p) => p.x)), y = Math.min(...points.map((p) => p.y));
+      return { x,y,w:Math.max(1,...points.map((p) => p.x+p.w-x)),h:Math.max(1,...points.map((p) => p.y+p.h-y)) };
     };
-    const nav = (back, next) => el("div", { class: "row" },
-      back !== null ? el("button", { type: "button", onclick: () => wizGo(back) }, "Voltar") : null,
-      next !== null ? el("button", { type: "button", class: "primary", onclick: () => wizGo(next) }, "Próximo") : null,
-      el("span", { class: "spacer" }),
-      el("button", { type: "button", class: "danger", onclick: wizEnd }, "Cancelar"));
-    if (w.step === 0 || w.step === 1) {
-      box.append(el("div", { class: "step" },
-        el("p", {}, el("b", {}, "1 de 4 · A mesa"), " — onde a fita da mesa começa e termina. Já vem com o valor medido; só mude se a fita mudou."),
-        el("div", { class: "grid2" },
-          num("Primeiro LED da mesa (esquerda)", "D0", "Número menor = esquerda."),
-          num("Último LED da mesa (direita)", "D1", "Número maior = direita.")),
-        nav(null, 2)));
-    } else if (w.step === 2 || w.step === 3) {
-      const left = w.step === 2;
-      const key = left ? "L" : "R";
-      const lo = () => (left ? w.D0 + 1 : w.L), hi = () => (left ? w.R : w.D1 - 1);
-      box.append(el("div", { class: "step" },
-        el("p", {}, el("b", {}, (left ? "2" : "3") + " de 4 · Borda " + (left ? "esquerda" : "direita")),
-          " — um LED está piscando em branco na fita (o resto do centro fica azul fixo). Mexa até o branco ficar exatamente na " +
-          (left ? "borda esquerda" : "borda direita") + " do monitor."),
-        nudge(left ? "Primeiro LED do centro:" : "Último LED do centro:", key, lo, hi),
-        nav(left ? 1 : 2, left ? 3 : 4)));
-      wizFlash();
-    } else if (w.step === 4) {
-      box.append(el("div", { class: "step" },
-        el("p", {}, el("b", {}, "4 de 4 · Conferir e gravar"), " — os dois LEDs das bordas piscam. Se estiver certo, grave."),
-        el("div", { class: "summary" },
-          el("span", {}, "Esquerda: " + (w.D0 + 1) + "–" + w.L + " (" + (w.L - w.D0) + " LEDs)"),
-          el("span", {}, "Centro: " + (w.L + 1) + "–" + (w.R + 1) + " (" + (w.R - w.L + 1) + " LEDs)"),
-          el("span", {}, "Direita: " + (w.R + 2) + "–" + (w.D1 + 1) + " (" + (w.D1 - w.R) + " LEDs)")),
-        el("p", { class: "muted small" }, "Grava os grupos desk-left, desk-center e desk-right e aplica na fita. LEDs que estavam em outros grupos saem deles."),
-        el("div", { class: "row" },
-          el("button", { type: "button", onclick: () => wizGo(3) }, "Voltar"),
-          el("button", { type: "button", class: "primary", onclick: wizSave }, "Gravar os 3 grupos"),
-          el("span", { class: "spacer" }),
-          el("button", { type: "button", class: "danger", onclick: wizEnd }, "Cancelar"))));
-      wizFlash();
+    const scr = ranked[0]?.count ? ranked[0] : bounding(main.length ? main : centers);
+    const desk = centers.filter((p) => isDesk(p) || (ranked[0]?.count && p.cy > scr.y + scr.h));
+    const deskSet = new Set(desk.map((p) => p.index));
+    const deskBounds = desk.length ? bounding(desk) : scr;
+    const deskRanks = new Map([...desk].sort((a,b) => a.cx-b.cx || a.index-b.index).map((p,i) => [p.index,i]));
+    const atX = (x) => 458+x*286, atY = (y) => 215+y*163;
+    sceneGeometry = centers.map((p) => {
+      const x = clamp((p.cx-scr.x)/Math.max(1,scr.w),0,1), y = clamp((p.cy-scr.y)/Math.max(1,scr.h),0,1);
+      if (deskSet.has(p.index)) {
+        const horizontal = deskBounds.w > ((desk[0]?.w || 0) + 1);
+        const ratio = horizontal ? clamp((p.cx-deskBounds.x)/deskBounds.w,0,1) : deskRanks.get(p.index)/Math.max(1,desk.length-1);
+        return { index:p.index,x:310+514*ratio,y:391,enabled:p.enabled !== false,section:"desk" };
+      }
+      const distance = [x,1-x,y,1-y];
+      const side = distance.indexOf(Math.min(...distance));
+      return { index:p.index,x:atX(side === 0 ? 0 : side === 1 ? 1 : x),
+        y:atY(side === 2 ? 0 : side === 3 ? 1 : y),enabled:p.enabled !== false,section:"monitor",side };
+    }).sort((a,b) => a.index-b.index);
+  }
+  function paintZoneGeometry() {
+    const layer = $("zones-art");
+    layer.replaceChildren();
+    for (const z of zoneMap.values()) {
+      const points = z.points;
+      if (!points.length) continue;
+      const d = points.map((p,i) => {
+        const prev = points[i-1];
+        const join = prev && prev.section === p.section && Math.hypot(prev.x-p.x,prev.y-p.y) < (p.section === "desk" ? 35 : 130);
+        return (join ? "L" : "M") + p.x + " " + (p.y+(p.section === "desk" ? 6 : 0));
+      }).join(" ");
+      layer.append(svg("path",{ d,stroke:z.outline,"data-zone":z.id,"data-part":z.section }));
     }
   }
-  async function wizSave() {
-    const w = S.wiz;
-    if (!w) return;
-    const parts = [["desk-left", "Mesa: esquerda", w.D0, w.L - 1, "solid"], ["desk-center", "Mesa: centro", w.L, w.R, "source"], ["desk-right", "Mesa: direita", w.R + 1, w.D1, "solid"]];
-    const existing = {};
-    for (const [id] of parts) existing[id] = S.groups.find((g) => g.id === id) || null;
-    mutate(() => {
-      const notes = [];
-      for (const [id, name, a, b, type] of parts) {
-        const idx = [];
-        for (let i = a; i <= b; i++) idx.push(i);
-        let g = existing[id];
-        notes.push(...takeFromOthers(idx, g));
-        if (g && !S.groups.includes(g)) S.groups.push(g);
-        if (g) setGroupIndices(g, idx);
-        else {
-          g = { id, name, leds: { ranges: toRanges(idx) }, mode: type === "source" ? { type: "source" } : { type: "solid", color: "#ff9f40", brightness: 1 } };
-          S.groups.push(g);
+  function updateDotSizes() {
+    const density = sceneGeometry.length;
+    const radius = density > 240 ? 2.3 : density > 100 ? 2.6 : 3.3;
+    ledLayer.style.setProperty("--dot-radius", radius * ledScale + "px");
+    ledLayer.style.setProperty("--glow-radius", radius * 2.15 * ledScale + "px");
+    ledLayer.style.setProperty("--hit-radius", Math.max(8, radius * 2.2) * ledScale + "px");
+  }
+  function renderGeometry() {
+    buildLayout();
+    zoneMap.clear();
+    pointMap.clear();
+    ledLayer.replaceChildren();
+    const owner = new Map();
+    S.groups.forEach((g,i) => {
+      const set = new Set(groupIds(g));
+      if (!set.size) return;
+      const points = sceneGeometry.filter((p) => set.has(p.index));
+      const desk = points.filter((p) => p.section === "desk").length;
+      const z = { ...g,points,section:areaOfGroup(g) || (desk > points.length/2 ? "desk" : "monitor"),
+        color:baseColors[i%baseColors.length],outline:outlineColors[i%outlineColors.length] };
+      zoneMap.set(g.id,z);
+      for (const p of points) owner.set(p.index,z);
+    });
+    const rest = sceneGeometry.filter((p) => !owner.has(p.index));
+    for (const section of ["monitor","desk"]) {
+      const points = rest.filter((p) => p.section === section);
+      if (!points.length) continue;
+      const id = "unassigned-" + section;
+      const z = { id,name: (section === "desk" ? "Mesa" : "Monitor") + (zoneMap.size ? " · livres" : ""),
+        section, points, mode:{ type:"source" }, color:section === "desk" ? baseColors[1] : baseColors[0],outline:outlineColors[1],unsaved:true };
+      zoneMap.set(id,z);
+      for (const p of points) owner.set(p.index,z);
+    }
+    for (const p of sceneGeometry) {
+      const z = owner.get(p.index);
+      const hit = svg("circle",{ class:"hit",cx:p.x,cy:p.y,"data-led":p.index,"data-part":p.section });
+      const title = svg("title"); title.textContent = groupName(z) + " · LED " + (p.index+1); hit.append(title);
+      const glow = svg("circle",{ class:"glow",cx:p.x,cy:p.y,fill:"#000",opacity:0,"data-part":p.section });
+      const dot = svg("circle",{ class:"led",cx:p.x,cy:p.y,fill:"#000","data-index":p.index,"data-part":p.section });
+      ledLayer.append(glow,dot,hit);
+      pointMap.set(p.index,{ ...p,z,hit,glow,dot });
+    }
+    if (S.selected && !zoneMap.has(S.selected)) S.selected = zoneMap.keys().next().value || null;
+    paintZoneGeometry();
+    renderMobileLeds();
+    updateDotSizes();
+    renderZones();
+    drawPreview(performance.now(),true);
+  }
+  function renderZones() {
+    $("zone-list").replaceChildren();
+    for (const z of zoneMap.values()) {
+      const b = button("",(ev) => { selectZone(z.id); openMenu(ev.currentTarget); },
+        { class:"zone-chip","data-zone":z.id,title:groupName(z), "aria-haspopup":"dialog" });
+      b.style.setProperty("--zone-chip",z.outline);
+      b.append(mk("span",{ "aria-hidden":"true" },views.find((v) => v.id === z.section)?.icon || "◈"),groupName(z));
+      $("zone-list").append(b);
+    }
+    if (!zoneMap.size) $("zone-list").append(mk("span",{ class:"muted" },"Nenhum LED configurado"));
+    renderControls();
+    markSelections();
+  }
+  function markSelections() {
+    for (const b of $("views").children) b.setAttribute("aria-pressed",String(b.dataset.view === activeView));
+    for (const b of $("zone-list").querySelectorAll("button")) b.setAttribute("aria-pressed",String(b.dataset.zone === S.selected));
+    for (const path of $("zones-art").children) path.classList.toggle("selected",path.dataset.zone === S.selected);
+    for (const p of pointMap.values()) p.dot.classList.toggle("selected",Boolean(S.draft?.indices.has(p.index)));
+  }
+  function selectZone(id) {
+    if (!zoneMap.has(id)) return;
+    S.selected = id;
+    renderControls();
+    markSelections();
+  }
+  function nearestLed(ev) {
+    const p = clientPoint(ev.clientX,ev.clientY);
+    if (!orderPick && !S.editing && room.dataset.zoomed !== "true" && !focusKind) return;
+    let nearest, best=15*ledScale;
+    for (const led of pointMap.values()) {
+      const d = Math.hypot(p.x-led.x,p.y-led.y);
+      if (d < best) { nearest=led; best=d; }
+    }
+    return nearest;
+  }
+  function rangeBand(a,b) {
+    const bounds = { x:Math.min(a.x,b.x), y:Math.min(a.y,b.y),width:Math.abs(a.x-b.x),height:Math.abs(a.y-b.y) };
+    for (const [k,v] of Object.entries(bounds)) $("band").setAttribute(k,v);
+    $("band").setAttribute("visibility","visible");
+    return new Set(sceneGeometry.filter((p) => p.x >= bounds.x && p.x <= bounds.x+bounds.width && p.y >= bounds.y && p.y <= bounds.y+bounds.height).map((p) => p.index));
+  }
+  function editMode(on) {
+    S.editing = on;
+    S.draft = null;
+    room.dataset.edit = String(on);
+    $("edit").setAttribute("aria-pressed",String(on));
+    setHint(on ? "Arraste sobre os pontos para rascunhar uma zona [mock]." : "");
+    markSelections();
+  }
+  room.addEventListener("wheel",(ev) => {
+    ev.preventDefault();
+    zoomAround(ev.deltaY < 0 ? 1.19 : 1/1.19,clientPoint(ev.clientX,ev.clientY),false);
+  },{ passive:false });
+  room.addEventListener("pointerdown",(ev) => {
+    if (ev.button !== 0) return;
+    cancelAnimationFrame(cameraAnimation);
+    pointers.set(ev.pointerId,{ x:ev.clientX,y:ev.clientY });
+    room.setPointerCapture(ev.pointerId);
+    if (pointers.size === 1) {
+      drag = { origin:clientPoint(ev.clientX,ev.clientY), x:ev.clientX,y:ev.clientY,camera:{ ...camera },
+        section:ev.target.closest("[data-view]")?.dataset.view, point:nearestLed(ev),moved:false };
+    } else if (pointers.size === 2) {
+      drag.moved = true;
+      const [a,b] = pointers.values();
+      drag.pinch = Math.hypot(b.x-a.x,b.y-a.y);
+    }
+  });
+  room.addEventListener("pointermove",(ev) => {
+    if (!pointers.has(ev.pointerId) || !drag) return;
+    pointers.set(ev.pointerId,{ x:ev.clientX,y:ev.clientY });
+    if (pointers.size > 1) {
+      const [a,b] = pointers.values();
+      const distance = Math.hypot(b.x-a.x,b.y-a.y);
+      if (drag.pinch > 0) zoomAround(distance/drag.pinch,clientPoint((a.x+b.x)/2,(a.y+b.y)/2),false);
+      drag.pinch = distance;
+      return;
+    }
+    if (drag.pinch || (!drag.moved && Math.hypot(ev.clientX-drag.x,ev.clientY-drag.y) < 5)) return;
+    drag.moved = true;
+    if (S.editing) {
+      S.draft = { zone:S.selected,indices:rangeBand(drag.origin,clientPoint(ev.clientX,ev.clientY)) };
+      markSelections();
+    } else {
+      room.dataset.grab = "true";
+      const c = drag.camera;
+      showCamera(fitView(c.x+c.w/2-(ev.clientX-drag.x)*ledScale,c.y+c.h/2-(ev.clientY-drag.y)*ledScale,baseRect.w/c.w));
+    }
+  });
+  function releaseRoom(ev) {
+    pointers.delete(ev.pointerId);
+    if (pointers.size || !drag) return;
+    room.dataset.grab = "false";
+    $("band").setAttribute("visibility","hidden");
+    if (ev.type !== "pointercancel") {
+      if (S.editing && drag.moved) setHint((S.draft?.indices.size || 0) + " LEDs no rascunho [mock].");
+      else if (!drag.moved && orderPick && drag.point) pickOrderPoint(drag.point.index);
+      else if (!drag.moved && drag.point && S.editing) {
+        const indices = new Set(S.draft?.indices || []);
+        const i = drag.point.index;
+        if (indices.has(i)) indices.delete(i); else indices.add(i);
+        S.draft = { zone:S.selected,indices };
+        setHint(indices.size + " LEDs no rascunho [mock].");
+        markSelections();
+      } else if (!drag.moved && drag.point?.z) {
+        selectZone(drag.point.z.id);
+        openMenu($("zone-list").querySelector('[aria-pressed="true"]') || $("menu"));
+      } else if (!drag.moved && drag.section === "monitor" && !orderPick) {
+        openArea("monitor",$("views").querySelector('[data-view="monitor"]'));
+      } else if (!drag.moved && drag.section) navigateView(drag.section);
+    }
+    drag = null;
+  }
+  room.addEventListener("pointerup",releaseRoom);
+  room.addEventListener("pointercancel",releaseRoom);
+  new ResizeObserver(() => showCamera(camera)).observe(room);
+
+  const popup = $("popup"), settings = $("settings"), orderDialog = $("order-dialog");
+  const modalOrigins = new WeakMap();
+  function focusables(dialog) {
+    return [...dialog.querySelectorAll("button,select,input,summary,[tabindex]")].filter((e) =>
+      !e.disabled && e.tabIndex >= 0 && e.getClientRects().length);
+  }
+  function setupDialog(dialog, close) {
+    const pane = dialog.querySelector(".popup-inner");
+    const updateScrollCue = () => {
+      const remaining = pane.scrollHeight - pane.clientHeight - pane.scrollTop;
+      dialog.toggleAttribute("data-more-below",pane.clientHeight > 0 && remaining > 2);
+    };
+    pane.addEventListener("scroll",updateScrollCue,{passive:true});
+    const watchSize = new ResizeObserver(updateScrollCue);
+    watchSize.observe(pane);
+    for (const child of pane.children) watchSize.observe(child);
+    $(close).addEventListener("click",() => dialog.close());
+    let outside = false;
+    dialog.addEventListener("pointerdown",(ev) => { outside = ev.target === dialog; });
+    dialog.addEventListener("click",(ev) => { if (outside && ev.target === dialog) dialog.close(); outside = false; });
+    dialog.addEventListener("keydown",(ev) => {
+      if (ev.key !== "Tab") return;
+      const controls = focusables(dialog), first = controls[0], last = controls.at(-1);
+      if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last?.focus(); }
+      else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first?.focus(); }
+    });
+    dialog.addEventListener("close",() => {
+      if (document.querySelector("dialog[open]") || orderPick) return;
+      leaveFocus();
+      const origin = modalOrigins.get(dialog);
+      (origin?.isConnected ? origin : $("menu")).focus({ preventScroll:true });
+    });
+  }
+  setupDialog(popup,"close");
+  setupDialog(settings,"settings-close");
+  setupDialog(orderDialog,"order-close");
+  function showModal(dialog, origin) {
+    if (dialog.open) return;
+    for (const d of [popup,settings,orderDialog]) if (d.open) d.close();
+    modalOrigins.set(dialog,origin);
+    activateFocus(focusKind || "monitor",dialog);
+    dialog.showModal();
+  }
+  function openMenu(origin) {
+    if (!S.selected) S.selected = zoneFor("monitor")?.id || zoneMap.keys().next().value || null;
+    focusKind = zoneMap.get(S.selected)?.section === "desk" ? "desk" : "monitor";
+    selectTab("now");
+    $("notice").textContent = "";
+    renderControls();
+    markSelections();
+    showModal(popup,origin);
+  }
+  function selectTab(id, focus = false) {
+    const tabs = [...popup.querySelectorAll('[role="tab"]')];
+    for (const tab of tabs) {
+      const target = tab.getAttribute("aria-controls"), active = target === id;
+      tab.setAttribute("aria-selected",String(active));
+      tab.tabIndex = active ? 0 : -1;
+      $(target).hidden = !active;
+      if (active && focus) tab.focus();
+    }
+  }
+  popup.querySelector(".tabs").addEventListener("click",(ev) => {
+    const tab = ev.target.closest('[role="tab"]');
+    if (tab) selectTab(tab.getAttribute("aria-controls"));
+  });
+  popup.querySelector(".tabs").addEventListener("keydown",(ev) => {
+    const tabs = [...popup.querySelectorAll('[role="tab"]')], i = tabs.indexOf(ev.target);
+    const index = { ArrowRight:(i+1)%tabs.length,ArrowLeft:(i+tabs.length-1)%tabs.length,Home:0,End:tabs.length-1 }[ev.key];
+    if (i < 0 || index === undefined) return;
+    ev.preventDefault();
+    selectTab(tabs[index].getAttribute("aria-controls"),true);
+  });
+  function zoneOptions(select, active) {
+    const zones = [...zoneMap.values()];
+    const values = zones.map((z) => [z.id,groupName(z)]);
+    if (JSON.stringify(values) !== select.dataset.options) {
+      select.replaceChildren(...values.map(([id,name]) => mk("option",{value:id},name)));
+      select.dataset.options = JSON.stringify(values);
+    }
+    if (active && zoneMap.has(active)) select.value = active;
+    select.disabled = !zones.length;
+  }
+  function renderSceneButtons() {
+    const list = $("scene-list");
+    const prior = document.activeElement?.dataset?.scene;
+    list.replaceChildren();
+    if (!S.scenes.length) list.append(mk("p",{class:"muted"},"Nenhuma cena neste perfil."));
+    for (const sc of S.scenes) {
+      list.append(button(groupName(sc),() => activateScene(sc),
+        { "data-scene":sc.id,"aria-pressed":String(sc.id === sceneID(stateNow().scene)) }));
+    }
+    if (prior && popup.open) [...list.children].find((b) => b.dataset.scene === prior)?.focus();
+  }
+  function paintSwitch(b,on) {
+    b.setAttribute("aria-checked",String(on));
+    b.textContent = on ? "Ligada" : "Desligada";
+  }
+  function renderControls() {
+    const z = zoneMap.get(S.selected), mode = z?.mode || {};
+    $("popup-zone").textContent = z ? groupName(z) + " · " + z.points.length + " LEDs" + (S.live && !S.groupsMock ? "" : " · [mock]") : "Selecione uma zona";
+    zoneOptions($("zone-picker"),S.selected);
+    zoneOptions($("target"),$("target").dataset.pinned === "true" ? $("target").value : S.selected);
+    $("color").value = quietHex(mode.color,z?.color || "#ffb884");
+    $("brightness").value = Math.round((mode.brightness ?? 1)*100);
+    $("brightness-value").textContent = $("brightness").value + "%";
+    paintSwitch($("power"),mode.type !== "off");
+    for (const id of ["color","brightness","power","zone-order","event","effect","duration"]) $(id).disabled = !z;
+    for (const b of $("preset-list").children) b.disabled = !z;
+    $("trigger-form").querySelector('[type="submit"]').disabled = !z;
+    const saved = safe(() => JSON.parse(local.get("rule." + stateNow().profile)),null);
+    if (saved && $("trigger-form").dataset.profile !== stateNow().profile) {
+      if ([...$("event").options].some((o) => o.value === saved.event)) $("event").value = saved.event;
+      if ([...$("effect").options].some((o) => o.value === saved.effect)) $("effect").value = saved.effect;
+      if ([...$("duration").options].some((o) => o.value === saved.duration)) $("duration").value = saved.duration;
+      if (zoneMap.has(saved.zone)) $("target").value = saved.zone;
+    }
+    $("trigger-form").dataset.profile = stateNow().profile || "";
+    renderSceneButtons();
+    paintDock();
+  }
+  function updateConnection(message) {
+    const count = stateNow().led_count ?? sceneGeometry.length;
+    if (simulation) {
+      $("connection").textContent = "[mock] Simulação local · " + (message || count + " LEDs · sem conexão com o Prismatik");
+      return;
+    }
+    $("connection").textContent = message
+      ? "[mock] · " + message
+      : S.live
+        ? (S.wsUp ? "Ao vivo" : "Conectado · atualizando luz") + " · " + count + " LEDs" + (S.geometryMock || S.groupsMock ? " · dados parciais [mock]" : "")
+        : "Prévia [mock] · " + count + " LEDs · abra pelo Prismatik para conectar";
+  }
+  async function exclusive(notice, work) {
+    if (busy) { $(notice).textContent = "Aguarde a mudança anterior."; return; }
+    busy = true;
+    try { await work(); }
+    catch (e) { $(notice).textContent = e.message; }
+    finally { busy = false; }
+  }
+  function paintBrightness() { $("brightness-value").textContent = $("brightness").value + "%"; }
+  function newZone(z, groups, mode) {
+    const base = "zona-" + z.section;
+    let id = base;
+    for (let i=2; groups.some((g) => g.id === id); i++) id = base + "-" + i;
+    return { id,name:groupName(z),leds:{ranges:toRanges(z.points.map((p) => p.index))},mode };
+  }
+  function changeZone(updateMode, message, zoneId = S.selected) {
+    const z = zoneMap.get(zoneId);
+    if (!z) return;
+    exclusive("notice",async () => {
+      const profile = S.state.profile;
+      const live = S.live && !S.groupsMock && !S.geometryMock;
+      const actual = !z.unsaved;
+      const collection = groupRoute(profile);
+      const path = collection + "/" + encodeURIComponent(z.id);
+      try {
+        let result;
+        if (live) {
+          $("notice").textContent = "Salvando a zona…";
+          if (actual) {
+            const {data:latest, etag} = await api("GET",path,undefined,{withVersion:true});
+            if (S.state.profile !== profile) return;
+            const mode = updateMode(latest.mode);
+            result = await api("PATCH",path,{mode},{ifMatch:etag?.startsWith('"') ? etag : undefined});
+          } else {
+            const latest = await api("GET",collection);
+            if (S.state.profile !== profile) return;
+            result = await api("POST",collection,newZone(z,latest,updateMode(z.mode)));
+          }
+        } else {
+          const mode = updateMode(z.mode);
+          result = actual ? { ...S.groups.find((g) => g.id === z.id),mode } : newZone(z,S.groups,mode);
+        }
+        if (S.state.profile !== profile) return;
+        S.groups = actual ? S.groups.map((g) => g.id === result.id ? result : g)
+          : [...S.groups.filter((g) => g.id !== result.id),result];
+        S.state.scene = null;
+        if (zoneId === S.selected) S.selected = result.id;
+        renderGeometry();
+        $("notice").textContent = message + (live ? " Salvo no perfil." : " Prévia [mock].");
+      } catch (e) {
+        if (live && [404,409,412].includes(e.status)) {
+          await refreshLive().catch(() => {});
+          if (e.status === 412) {
+            renderControls();
+            throw new ApiError(412,"A zona mudou durante o ajuste. Confira o perfil e tente novamente.");
+          }
+        }
+        renderControls();
+        throw e;
+      }
+    });
+  }
+  const poweredModes = new Map();
+  function currentMode(mode, z) {
+    return mode?.type === "off" ? poweredModes.get(stateNow().profile + ":" + z.id) || {type:"solid",color:z.color,brightness:1} :
+      mode || {type:"solid"};
+  }
+  function changeColor(color, message, z) {
+    if (z) changeZone((mode) => ({type:"solid",color,brightness:mode?.brightness ?? 1}),message,z.id);
+  }
+  function changePower(z, turnOff, message) {
+    if (!z) return;
+    const key = stateNow().profile + ":" + z.id;
+    changeZone((mode) => {
+      if (!turnOff) return currentMode(mode,z);
+      if (mode && mode.type !== "off") poweredModes.set(key,mode);
+      return {type:"off"};
+    },message,z.id);
+  }
+  $("color").addEventListener("change",() => changeColor($("color").value,"Cor ajustada.",zoneMap.get(S.selected)));
+  $("brightness").addEventListener("input",paintBrightness);
+  $("brightness").addEventListener("change",() => {
+    const z = zoneMap.get(S.selected);
+    const bright = +$("brightness").value/100;
+    changeZone((latest) => {
+      const mode = currentMode(latest,z);
+      return mode.type === "source" ? {type:"solid",color:z.color,brightness:bright} : {...mode,brightness:bright};
+    },"Brilho ajustado.");
+  });
+  $("power").addEventListener("click",() => {
+    const z = zoneMap.get(S.selected);
+    const off = $("power").getAttribute("aria-checked") === "true";
+    changePower(z,off,off ? "Zona desligada." : "Zona ligada.");
+  });
+  $("zone-picker").addEventListener("change",() => {
+    $("target").dataset.pinned = "false";
+    selectZone($("zone-picker").value);
+  });
+  for (const preset of presets) {
+    const b = button("",() => changeZone(() => ({type:"solid",color:preset.color,brightness:preset.brightness}),"“" + preset.name + "” ativado."));
+    const dot = mk("span",{class:"palette-dot","aria-hidden":"true"}); dot.style.setProperty("--preset",preset.color);
+    b.append(dot,mk("span",{"aria-hidden":"true"},preset.icon),preset.name);
+    $("preset-list").append(b);
+  }
+  async function activateScene(sc) {
+    exclusive("notice",async () => {
+      if (S.live) {
+        $("notice").textContent = "Ativando a cena…";
+        await api("POST","/scenes/"+encodeURIComponent(sc.id)+"/activate");
+        await refreshLive();
+      } else {
+        S.groups = S.groups.map((g,i) => ({...g,mode:{type:"solid",color:sc.colors?.[i%sc.colors.length] || baseColors[i%baseColors.length],brightness:.9}}));
+        renderGeometry();
+      }
+      S.state.scene = sc.id;
+      renderSceneButtons();
+      $("notice").textContent = "Cena “" + groupName(sc) + "” ativa." + (S.live ? "" : " Prévia [mock].");
+    });
+  }
+  function recordRule() {
+    local.set("rule." + stateNow().profile, JSON.stringify({
+      event:$("event").value,effect:$("effect").value,zone:$("target").value,duration:$("duration").value
+    }));
+  }
+  for (const id of ["event","effect","target","duration"]) $(id).addEventListener("change",() => {
+    if (id === "target") $("target").dataset.pinned = "true";
+    recordRule();
+  });
+  let testTrigger = null;
+  $("trigger-form").addEventListener("submit",(ev) => {
+    ev.preventDefault();
+    exclusive("notice",async () => {
+      const z = zoneMap.get($("target").value);
+      if (!z) return;
+      recordRule();
+      const type = $("effect").value;
+      const t = {
+        id:"teste-painel-lofi", effect:{type,color:quietHex(z.mode?.color,z.color)},
+        priority:50,blend:"override",duration_ms:Number($("duration").value)*1000,
+        target:z.unsaved || S.groupsMock ? {leds:{ranges:toRanges(z.points.map((p) => p.index))}} : {groups:[z.id]}
+      };
+      if (type !== "solid") t.effect.period_ms = 1100;
+      if (type === "wave") t.effect.width = .3;
+      if ($("event").value) t.source = $("event").value;
+      if (S.live && !S.geometryMock) {
+        const result = await api("POST","/trigger",t);
+        if (result?.suppressed) { $("notice").textContent = "A cena atual silenciou este teste."; return; }
+        testTrigger = result?.overlay_id || t.id;
+      } else {
+        testTrigger = t.id;
+        S.overlay = {z:z.id, type,color:t.effect.color, from:performance.now(),until:performance.now()+t.duration_ms};
+        drawPreview(performance.now(),true);
+      }
+      $("undo").disabled = false;
+      $("notice").textContent = "Teste disparado em " + groupName(z) + "." + (S.live ? "" : " Prévia [mock].");
+    });
+  });
+  $("undo").addEventListener("click",() => exclusive("notice",async () => {
+    if (!testTrigger) return;
+    if (S.live && !S.geometryMock) await api("DELETE","/trigger/"+encodeURIComponent(testTrigger));
+    S.overlay = null;
+    testTrigger = null;
+    $("undo").disabled = true;
+    drawPreview(performance.now(),true);
+    $("notice").textContent = "Teste desfeito. O rascunho foi mantido.";
+  }));
+  function addKeyboardNavigation(container) {
+    container.addEventListener("keydown",(ev) => {
+      const buttons = [...container.querySelectorAll("button")], i=buttons.indexOf(ev.target);
+      if (i < 0) return;
+      const offset = {ArrowLeft:-1,ArrowRight:1,ArrowUp:-1,ArrowDown:1}[ev.key];
+      if (!offset) return;
+      ev.preventDefault();
+      buttons[(i+offset+buttons.length)%buttons.length].focus();
+    });
+  }
+  for (const v of views) {
+    const b = button("",(ev) => v.id === "monitor" ? openArea("monitor",ev.currentTarget) : navigateView(v.id),{"data-view":v.id,title:v.name,"aria-pressed":"false"});
+    b.append(mk("span",{"aria-hidden":"true"},v.icon),v.name);
+    $("views").append(b);
+  }
+  addKeyboardNavigation($("views"));
+  addKeyboardNavigation($("zone-list"));
+  $("menu").addEventListener("click",() => openMenu($("menu")));
+  $("in").addEventListener("click",() => zoomAround(1.28));
+  $("out").addEventListener("click",() => zoomAround(1/1.28));
+  $("home").addEventListener("click",() => navigateView(""));
+  $("edit").addEventListener("click",() => editMode(!S.editing));
+  $("room").setAttribute("tabindex","0");
+  room.addEventListener("keydown",(ev) => {
+    const key = ev.key;
+    if (key === "+" || key === "=") zoomAround(1.28);
+    else if (key === "-") zoomAround(1/1.28);
+    else if (key === "0" || key === "Escape") navigateView("");
+    else if (key.startsWith("Arrow")) {
+      const dx = key === "ArrowLeft" ? -.1 : key === "ArrowRight" ? .1 : 0;
+      const dy = key === "ArrowUp" ? -.1 : key === "ArrowDown" ? .1 : 0;
+      goCamera(fitView(camera.x+camera.w*(.5+dx),camera.y+camera.h*(.5+dy),baseRect.w/camera.w));
+    } else return;
+    ev.preventDefault();
+  });
+  document.addEventListener("keydown",(ev) => {
+    if (ev.key !== "Escape" || document.querySelector("dialog[open]")) return;
+    if (orderPick) endOrderPick();
+    else if (S.editing) editMode(false);
+    else navigateView("");
+  });
+
+  function applyStyle(value) {
+    const id = styleIds.includes(value) ? value : styleIds[0];
+    root.dataset.style = id;
+    $("theme").value = $("settings-theme").value = id;
+    local.set("style",id);
+  }
+  function applyScheme(value) {
+    const pref = ["dark","light"].includes(value) ? value : "system";
+    const mode = pref === "system" ? (prefersDark.matches ? "dark" : "light") : pref;
+    root.dataset.mode = mode;
+    $("settings-mode").value = pref;
+    $("scheme").textContent = mode === "light" ? "☾" : "☀";
+    $("scheme").setAttribute("aria-pressed",String(mode === "light"));
+    local.set("scheme",pref);
+    document.querySelector('meta[name="theme-color"]').content = getComputedStyle(root).getPropertyValue("--bg").trim();
+  }
+  for (const id of ["theme","settings-theme"]) $(id).addEventListener("change",() => applyStyle($(id).value));
+  $("scheme").addEventListener("click",() => applyScheme(root.dataset.mode === "light" ? "dark" : "light"));
+  $("settings-mode").addEventListener("change",() => applyScheme($("settings-mode").value));
+  prefersDark.addEventListener("change",() => applyScheme(local.get("scheme")));
+  const trackList = [
+    { title:"Chill lofi inspired [loop edit]",file:"audio/chill-lofi.ogg" },
+    { title:"Dimly lit",file:"audio/dimly-lit.mp3" },
+  ];
+  const music = $("music");
+  let trackIndex = 0;
+  function showMusic() {
+    const track = trackList[trackIndex], playing = !music.paused;
+    $("track-name").textContent = track.title;
+    $("track-name").title = track.title;
+    $("track-state").textContent = playing ? (music.muted ? "Tocando · mudo" : "Tocando") : "Pausado";
+    $("play").textContent = playing ? "Ⅱ" : "▶";
+    $("play").setAttribute("aria-label",playing ? "Pausar" : "Reproduzir");
+    $("mute").title = music.muted ? "Ativar som" : "Silenciar música";
+    $("mute").setAttribute("aria-pressed",String(music.muted));
+    $("volume").value = Math.round(music.volume*100);
+  }
+  function playMusic() {
+    if (!music.getAttribute("src")) music.src = trackList[trackIndex].file;
+    music.play().catch(() => {
+      if (music.paused) $("track-state").textContent = "Faixa indisponível";
+    });
+  }
+  function stepTrack(by) {
+    const playing = !music.paused;
+    trackIndex = (trackIndex+by+trackList.length)%trackList.length;
+    music.pause();
+    music.removeAttribute("src");
+    music.load();
+    showMusic();
+    if (playing) playMusic();
+  }
+  $("play").addEventListener("click",() => music.paused ? playMusic() : music.pause());
+  $("prev-track").addEventListener("click",() => stepTrack(-1));
+  $("next-track").addEventListener("click",() => stepTrack(1));
+  $("mute").addEventListener("click",() => {
+    music.muted = !music.muted;
+    local.set("mute",String(music.muted));
+    showMusic();
+  });
+  $("volume").addEventListener("input",() => {
+    music.volume = +$("volume").value/100;
+    local.set("volume",String(music.volume));
+    showMusic();
+  });
+  for (const event of ["play","pause","volumechange"]) music.addEventListener(event,showMusic);
+  music.addEventListener("error",() => { $("track-state").textContent = "Faixa indisponível"; });
+
+  function settingRows(id, rows) {
+    $(id).replaceChildren(...rows.map(([name,val]) => {
+      const p = mk("p");
+      p.append(mk("strong",{},name),mk("span",{},val));
+      return p;
+    }));
+  }
+  function renderSettings() {
+    const st = stateNow(), items = [...new Set([...(S.profiles || []),st.profile].filter(Boolean))];
+    const select = $("profile");
+    if (JSON.stringify(items) !== select.dataset.options) {
+      select.replaceChildren(...items.map((p) => mk("option",{value:p},p)));
+      select.dataset.options = JSON.stringify(items);
+    }
+    select.value = st.profile || "";
+    select.disabled = items.length < 2;
+    $("global-bright").value = st.brightness ?? 100;
+    $("global-value").textContent = $("global-bright").value + "%";
+    paintSwitch($("global-power"),st.on !== false);
+    const mode = { ambilight:"Captura da tela",moodlamp:"Lâmpada",soundvisualizer:"Visualizador de áudio" };
+    settingRows("capture-info",[
+      ["Modo ativo",mode[normalized(st.mode)] || st.mode || "Captura da tela [mock]"],
+      ["Telas na geometria",String(S.layout?.screens?.length ?? 0)]
+    ]);
+    settingRows("device-info",[
+      ["Dispositivo ativo",st.device || "Fita de demonstração [mock]"],["Número de LEDs",String(st.led_count ?? sceneGeometry.length)]
+    ]);
+    settingRows("integration-info",[
+      ["Conexão com o Prismatik",simulation ? "Simulação local [mock]" : S.live ? "Conectado" : "Prévia [mock]"],
+      ["Regras automáticas","Rascunho no navegador [mock]"]
+    ]);
+    settingRows("advanced-info",[
+      ["Versão informada",st.version || "5.13 [mock]"],["Outros ajustes","Disponíveis na janela clássica"]
+    ]);
+    filterSettings();
+  }
+  function showSettings() {
+    $("settings-notice").textContent = "";
+    resetRestore();
+    renderSettings();
+    showModal(settings,$("settings-open"));
+  }
+  $("settings-open").addEventListener("click",showSettings);
+  $("settings-search").addEventListener("input",filterSettings);
+  const settingOpenStates = new Map();
+  function filterSettings() {
+    const q = normalized($("settings-search").value.trim());
+    let match = 0;
+    for (const d of $("settings-groups").querySelectorAll(":scope > details")) {
+      const titleMatch = normalized(d.querySelector("summary").textContent).includes(q);
+      const rows = [...d.querySelectorAll(".control,.setting-items p,.inventory-row,button")];
+      let matchedRow = false;
+      for (const row of rows) {
+        const result = !q || titleMatch || normalized(row.textContent).includes(q);
+        row.classList.toggle("search-hidden",!result);
+        matchedRow ||= result && !row.hidden;
+      }
+      d.hidden = Boolean(q && !titleMatch && !matchedRow);
+      if (!d.hidden) match++;
+      if (q) {
+        if (!settingOpenStates.has(d)) settingOpenStates.set(d,d.open);
+        if (!d.hidden) d.open = true;
+        const inv = d.querySelector(".inventory");
+        if (inv && !titleMatch && inv.querySelector(".inventory-row:not(.search-hidden)")) inv.open = true;
+      } else if (settingOpenStates.has(d)) {
+        d.open = settingOpenStates.get(d);
+        settingOpenStates.delete(d);
+      }
+    }
+    $("settings-empty").hidden = match > 0;
+  }
+  function resetRestore() {
+    $("restore").textContent = "Restaurar padrão";
+    $("restore").dataset.confirm = "false";
+    $("restore-cancel").hidden = true;
+  }
+  $("restore-cancel").addEventListener("click",() => { resetRestore(); $("settings-notice").textContent = "Restauração cancelada."; });
+  $("restore").addEventListener("click",() => {
+    if ($("restore").dataset.confirm !== "true") {
+      $("restore").dataset.confirm = "true";
+      $("restore").textContent = "Confirmar restauração";
+      $("restore-cancel").hidden = false;
+      $("settings-notice").textContent = "Restaura estilo, modo, fundo e volume deste navegador.";
+      return;
+    }
+    applyStyle("lofi");
+    applyScheme("system");
+    navigateView("");
+    clearScreenFile();
+    setScreenLoop("stars");
+    if (focusKind) goCamera(focusPose(focusKind));
+    music.volume = .64;
+    music.muted = true;
+    local.set("volume",".64");
+    local.set("mute","true");
+    showMusic();
+    resetRestore();
+    $("settings-notice").textContent = "Preferências do quarto restauradas.";
+  });
+  function patchState(data, message) {
+    exclusive("settings-notice",async () => {
+      try {
+        if (S.live) {
+          $("settings-notice").textContent = "Salvando…";
+          await api("PATCH","/state",data);
+          if (Object.hasOwn(data,"profile")) await refreshLive();
+          else S.state = { ...S.state,...data };
+        } else S.state = { ...S.state,...data };
+        drawPreview(performance.now(),true);
+        $("settings-notice").textContent = message + (S.live ? " Salvo no Prismatik." : " Prévia [mock].");
+      } finally {
+        renderSettings();
+      }
+    });
+  }
+  $("profile").addEventListener("change",() => patchState({profile:$("profile").value},"Perfil trocado."));
+  $("global-bright").addEventListener("input",() => { $("global-value").textContent = $("global-bright").value+"%"; });
+  $("global-bright").addEventListener("change",() => patchState({brightness:+$("global-bright").value},"Brilho geral ajustado."));
+  $("global-power").addEventListener("click",() => patchState({on:stateNow().on === false},"Luz geral ajustada."));
+
+  let order = { profile:null,accepted:[],draft:[],slot:0,trial:null,expires:0,clock:0,previous:null,animation:null };
+  function fallbackSegments() {
+    const count = stateNow().led_count ?? sceneGeometry.length;
+    const set = new Set(sceneGeometry.filter((p) => p.section === "desk").map((p) => p.index));
+    const boundaries = [];
+    for (let i=0;i<count;i++) {
+      const latest = boundaries.at(-1);
+      if (latest && set.has(i) === set.has(latest.start)) latest.end = i;
+      else boundaries.push({start:i,end:i});
+    }
+    return boundaries;
+  }
+  const segmentValues = (s) => ({start:+s.start,end:+s.end,reverse:Boolean(s.reverse),offset:+s.offset||0,mirror:Boolean(s.mirror)});
+  function mapOrder(segments, count) {
+    const result = Array(count).fill(-1);
+    for (const s of segments) {
+      if (!Number.isInteger(s.start) || !Number.isInteger(s.end) || s.start < 0 || s.end >= count || s.start > s.end) throw new Error("Confira os números do primeiro e último LED.");
+      if (!Number.isInteger(s.offset) || Math.abs(s.offset) >= count) throw new Error("Deslocamento fora do intervalo.");
+      const size = s.end-s.start+1;
+      const offset = ((s.offset % size)+size)%size;
+      for (let index=s.start;index<=s.end;index++) {
+        if (result[index] >= 0) throw new Error("Conflito: dois segmentos incluem o LED "+(index+1)+".");
+        const n = (index-s.start+offset)%size;
+        const physical = s.reverse ? s.end-n : s.start+n;
+        result[index] = s.mirror ? s.start+s.end-physical : physical;
+      }
+    }
+    if (result.includes(-1)) throw new Error("A ordem precisa cobrir todos os LEDs sem lacunas.");
+    return result;
+  }
+  function displaySegment(s) {
+    const desk = sceneGeometry.filter((p) => p.index >= s.start && p.index <= s.end && p.section === "desk").length;
+    return (desk >= (s.end-s.start+1)/2 ? "Mesa" : "Contorno") + " · " + (s.start+1) + "–" + (s.end+1);
+  }
+  function updateOrderResult(res,commit = true) {
+    const segments = (res?.segments || fallbackSegments()).map(segmentValues);
+    if (commit && !res?.trial_id) order.accepted = segments.map(segmentValues);
+    order.draft = segments;
+    order.trial = res?.trial_id || null;
+    order.expires = res?.expires_at_ms || 0;
+    order.slot = clamp(order.slot,0,Math.max(0,segments.length-1));
+    renderOrder();
+    clearInterval(order.clock);
+    if (order.trial) order.clock = setInterval(orderTick,250);
+  }
+  function orderTick() {
+    if (!order.trial) return;
+    const seconds = Math.ceil((order.expires-Date.now())/1000);
+    if (seconds > 0) {
+      $("order-subtitle").textContent = "Confirme em até " + seconds + " s";
+      return;
+    }
+    clearInterval(order.clock);
+    order.trial = null;
+    updateOrderResult({segments:order.accepted});
+    $("order-notice").textContent = "Tempo esgotado. Ordem anterior restaurada [mock].";
+  }
+  function renderOrder() {
+    const count = stateNow().led_count ?? sceneGeometry.length;
+    const select = $("order-segment"), list = order.draft;
+    select.replaceChildren(...list.map((s,i) => mk("option",{value:i},displaySegment(s))));
+    select.value = String(order.slot);
+    const s = list[order.slot];
+    if (s) {
+      $("order-start").value = s.start+1;
+      $("order-end").value = s.end+1;
+      $("order-reverse").value = String(s.reverse);
+      $("order-offset").value = s.offset;
+      $("order-mirror").checked = s.mirror;
+    }
+    for (const id of ["order-start","order-end"]) $(id).max = count;
+    $("order-offset").min = -(count-1);
+    $("order-offset").max = count-1;
+    for (const id of ["order-start","order-end","order-reverse","order-offset","order-mirror","order-pick","order-save","order-desk","order-cw","order-ccw"]) $(id).disabled = !s || Boolean(order.trial);
+    $("order-undo").disabled = !s;
+    $("order-test").disabled = !s;
+    $("order-confirm").hidden = !order.trial;
+    $("order-save").hidden = Boolean(order.trial);
+    if (!order.trial) $("order-subtitle").textContent = "Prévia de ordem [mock]";
+    else orderTick();
+    paintOrderSummary();
+  }
+  function paintOrderSummary() {
+    const s = order.draft[order.slot], prev = order.accepted[order.slot];
+    if (!s) { $("order-preview").textContent = "Nenhum segmento neste perfil."; return; }
+    const firstLast = (a) => {
+      if (!a) return "—";
+      const sequence = mapOrder([{...a,start:0,end:a.end-a.start}],a.end-a.start+1);
+      const first = sequence[0]+a.start+1, last = sequence.at(-1)+a.start+1;
+      return first + " → " + last;
+    };
+    try {
+      const count = stateNow().led_count ?? sceneGeometry.length;
+      mapOrder(order.draft,count);
+      const desc = (a) => firstLast({...a,offset:(a.offset || 0)%(a.end-a.start+1)});
+      $("order-preview").textContent = "Antes " + (prev ? desc(prev) : "—") + " · Agora " + desc(s);
+    } catch (e) {
+      $("order-preview").textContent = e.message;
+    }
+  }
+  function updateOrderField() {
+    if (!order.draft[order.slot]) return;
+    order.draft[order.slot] = {
+      start:+$("order-start").value-1,end:+$("order-end").value-1,reverse:$("order-reverse").value === "true",
+      offset:+$("order-offset").value,mirror:$("order-mirror").checked
+    };
+    paintOrderSummary();
+  }
+  function openOrder(from) {
+    const profile = stateNow().profile;
+    const selected = pointMap.get(zoneMap.get(S.selected)?.points[0]?.index);
+    if (order.profile !== profile) {
+      clearInterval(order.clock);
+      order = {...order,profile,slot:0,accepted:[],previous:null,trial:null};
+      updateOrderResult(null);
+    }
+    $("order-notice").textContent = "";
+    showModal(orderDialog,from);
+    if (selected) {
+      const idx = order.draft.findIndex((s) => selected.index >= s.start && selected.index <= s.end);
+      if (idx >= 0) { order.slot = idx; renderOrder(); }
+    }
+  }
+  $("zone-order").addEventListener("click",() => openOrder(modalOrigins.get(popup)||$("menu")));
+  $("settings-order").addEventListener("click",() => openOrder($("settings-open")));
+  $("order-segment").addEventListener("change",() => { order.slot=+$("order-segment").value; renderOrder(); });
+  for (const id of ["order-start","order-end","order-reverse","order-offset","order-mirror"]) $(id).addEventListener("input",updateOrderField);
+  function orderPreset(which) {
+    const candidates = order.draft.map((s,i) => ({s,i,desk:sceneGeometry.filter((p) => p.section === "desk" && p.index >= s.start && p.index <= s.end).length}));
+    const match = which === "desk" ? candidates.sort((a,b)=>b.desk-a.desk).find((x) => x.desk)
+      : candidates.find((x) => x.desk < (x.s.end-x.s.start+1)/2);
+    if (!match) { $("order-notice").textContent = "Esse segmento não está neste perfil."; return; }
+    order.slot = match.i;
+    order.draft[match.i] = {...match.s,reverse:which !== "cw",offset:0,mirror:false};
+    $("order-notice").textContent = "Prévia ajustada. Teste para conferir.";
+    renderOrder();
+  }
+  for (const id of ["desk","cw","ccw"]) $("order-"+id).addEventListener("click",() => orderPreset(id));
+  function markOrderPath(a,b) {
+    const layer = $("order-points"), arrow = $("order-arrow");
+    layer.replaceChildren();
+    arrow.setAttribute("visibility",a && b ? "visible" : "hidden");
+    if (a && b) {
+      const dx = b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy)||1;
+      const u=dx/d,v=dy/d,k=11*ledScale;
+      arrow.setAttribute("d",`M ${a.x} ${a.y} L ${b.x} ${b.y} m ${(-u+v*.48)*k} ${(-v-u*.48)*k} L ${b.x} ${b.y} l ${(-u-v*.48)*k} ${(-v+u*.48)*k}`);
+    }
+    [a,b].forEach((p,i) => {
+      if (!p) return;
+      const label = svg("text",{x:p.x+5*ledScale,y:p.y-10*ledScale,"font-size":11*ledScale});
+      label.textContent = (i === 0 ? "Início " : "Fim ") + (p.index+1);
+      layer.append(label);
+    });
+  }
+  $("order-pick").addEventListener("click",() => {
+    if (S.editing) editMode(false);
+    orderPick = { first:null,origin:modalOrigins.get(orderDialog) };
+    focusKind = "both";
+    activateFocus("both",orderDialog);
+    document.body.dataset.focusMode = "picking";
+    if (mobileQuery.matches) {
+      room.setAttribute("preserveAspectRatio","xMidYMid meet");
+      goCamera({x:257,y:199,w:639,h:230},false);
+    } else goCamera(focusPose("both"),false);
+    orderDialog.close();
+    room.dataset.edit = "true";
+    room.focus({preventScroll:true});
+    setHint("Clique no primeiro LED; Esc cancela.");
+  });
+  function endOrderPick(restore = true) {
+    const from = orderPick?.origin || $("menu");
+    orderPick = null;
+    room.dataset.edit = "false";
+    setHint("");
+    if (restore) { showModal(orderDialog,from); renderOrder(); }
+    else markOrderPath();
+  }
+  function pickOrderPoint(i) {
+    if (orderPick.first === null) {
+      orderPick.first = i;
+      markOrderPath(pointMap.get(i));
+      setHint("Agora clique no último LED; Esc cancela.");
+      return;
+    }
+    const a = orderPick.first, b = i, old=order.draft[order.slot];
+    const draft = { ...old,start:Math.min(a,b),end:Math.max(a,b),reverse:a>b };
+    const before = old.start < draft.start ? [segmentValues({start:old.start,end:draft.start-1})] : [];
+    const after = old.end > draft.end ? [segmentValues({start:draft.end+1,end:old.end})] : [];
+    if (draft.start >= old.start && draft.end <= old.end) {
+      order.draft.splice(order.slot,1,...before,draft,...after);
+      order.slot += before.length;
+    } else order.draft[order.slot] = draft;
+    markOrderPath(pointMap.get(a),pointMap.get(b));
+    endOrderPick();
+  }
+  $("order-test").addEventListener("click",() => exclusive("order-notice",async () => {
+    const count = stateNow().led_count ?? sceneGeometry.length, mapping = mapOrder(order.draft,count);
+    const segment = order.draft[order.slot];
+    const vertices = [mapping[segment.start],mapping[segment.end]];
+    markOrderPath(...vertices.map((index) => pointMap.get(index)));
+    order.animation = { indices:mapping,start:performance.now(),duration:3000 };
+    drawPreview(performance.now(),true);
+    $("order-notice").textContent = "Teste no desenho [mock].";
+  }));
+  $("order-save").addEventListener("click",() => exclusive("order-notice",async () => {
+    mapOrder(order.draft,stateNow().led_count ?? sceneGeometry.length);
+    updateOrderResult({segments:order.draft,trial_id:"local",expires_at_ms:Date.now()+15000},false);
+    $("order-notice").textContent = "Confira a ordem e confirme. Se o tempo acabar, o ajuste volta.";
+  }));
+  $("order-confirm").addEventListener("click",() => exclusive("order-notice",async () => {
+    if (!order.trial) return;
+    order.previous = order.accepted.map(segmentValues);
+    updateOrderResult({segments:order.draft});
+    $("order-notice").textContent = "Ordem mantida nesta prévia [mock].";
+  }));
+  $("order-undo").addEventListener("click",() => exclusive("order-notice",async () => {
+    const target = order.trial ? order.accepted : order.previous || order.accepted;
+    order.previous = null;
+    updateOrderResult({segments:target});
+    order.animation = null;
+    markOrderPath();
+    $("order-notice").textContent = "Alteração da ordem desfeita [mock].";
+  }));
+
+  const LED_STEP = 1000/15;
+  let animationTimer = 0, lastAmbientFrame = -1;
+  const ambient = { fairy:$("fairy"),rain:$("rain"),cat:$("cat"),steam:$("steam") };
+  function paintDot(p, color, strength) {
+    const mode = root.dataset.mode;
+    const key = color + "|" + strength.toFixed(2) + "|" + mode;
+    if (p.paint === key) return;
+    p.paint = key;
+    const lit = strength > .02;
+    p.dot.setAttribute("fill",lit ? color : mode === "light" ? "#736271" : "#554459");
+    p.dot.setAttribute("fill-opacity",lit ? Math.max(.28,strength) : .72);
+    p.dot.style.setProperty("--led-ring",lit ? (mode === "light" ? "#493244" : "#ffe6cf") : "#654b62");
+    p.glow.setAttribute("fill",color);
+    p.glow.setAttribute("opacity",lit ? Math.min(.39,strength*.42) : 0);
+    const mobile = mobileDots.get(p.index);
+    if (mobile) mobile.setAttribute("fill",lit ? color : "#726476");
+  }
+  const biasLights = {
+    monitor: { gradient:$("monitor-bias"), surfaces:[$("monitor-wall-light")], gains:[.82] },
+    desk: { gradient:$("desk-bias"), surfaces:[$("desk-wall-light"),$("rug-light")], gains:[.51,.87] },
+  };
+  function hexRgb(color) {
+    const value = Number.parseInt(color.slice(1),16);
+    return [value >> 16,(value >> 8) & 255,value & 255];
+  }
+  function rainbowRgb(hue) {
+    const channel = (offset) => {
+      const sector = (offset+hue/30)%12;
+      return Math.round(255*(.72-.2464*Math.max(-1,Math.min(sector-3,9-sector,1))));
+    };
+    return [channel(0),channel(8),channel(4)];
+  }
+  function paintBias(section, sample) {
+    const light = biasLights[section];
+    const peak = Math.max(sample.r,sample.g,sample.b);
+    const level = sample.count ? peak/(255*sample.count) : 0;
+    const strength = Math.pow(clamp(level,0,1),.68)*(root.dataset.mode === "light" ? .76 : 1);
+    // Variations below a few RGB levels are invisible in the reflected light.
+    if (peak) {
+      const rgb = [sample.r,sample.g,sample.b].map((channel) => Math.round(channel/peak*255));
+      if (!light.rgb || rgb.some((channel,i) => Math.abs(channel-light.rgb[i])>=5)) {
+        light.rgb = rgb;
+        light.gradient.style.color = "rgb("+rgb.join(",")+")";
+      }
+    }
+    const wasLit = light.strength > 0, isLit = strength > 0;
+    if (wasLit !== isLit || Math.abs(strength-light.strength)>=.012) {
+      light.strength = strength;
+      light.surfaces.forEach((surface,i) => surface.setAttribute("opacity",(strength*light.gains[i]).toFixed(3)));
+    }
+  }
+  function drawPreview(now, force = false) {
+    if (document.hidden) return;
+    const isReduced = reducedMotion.matches;
+    if (isReduced && !force) return;
+    const showLeds=Boolean(force || focusKind || orderPick || S.editing || room.dataset.zoomed === "true");
+    const ambientFrame = Math.floor(now/220);
+    const animateRoom = !isReduced && lastAmbientFrame !== ambientFrame;
+    const updateBias = force || animateRoom;
+    if ((showLeds || updateBias) && pendingFrame && !isReduced) {
+      const frame = safe(() => atob(pendingFrame),null);
+      if (frame) S.frame = frame;
+      pendingFrame = null;
+    }
+    const t = isReduced ? 0 : now/1000;
+    if (S.overlay && now >= S.overlay.until) S.overlay = null;
+    const running = order.animation && now-order.animation.start <= order.animation.duration ? order.animation : null;
+    if (!running) order.animation = null;
+    const runningIndex = running
+      ? running.indices[isReduced ? 0 : clamp(Math.floor((now-running.start)*running.indices.length/running.duration),0,running.indices.length-1)]
+      : -1;
+    const st = stateNow(), frame = S.wsUp && !isReduced ? S.frame : null;
+    if (showLeds || updateBias) {
+      const bias = {
+        monitor:{r:0,g:0,b:0,count:0},
+        desk:{r:0,g:0,b:0,count:0},
+      };
+      for (const p of pointMap.values()) {
+        const colIdx = p.index*3;
+        const m = p.z?.mode || {};
+        let color = quietHex(m.color,p.z?.color || "#ffb884"), opacity = 0, rgb;
+        if (running) {
+          color = p.index === runningIndex ? "#fff6d4" : "#846c8e";
+          opacity = p.index === runningIndex ? 1 : .07;
+        } else if (p.enabled && st.on !== false) {
+          if (frame && colIdx+2 < frame.length) {
+            rgb = [frame.charCodeAt(colIdx),frame.charCodeAt(colIdx+1),frame.charCodeAt(colIdx+2)];
+            opacity = Math.max(...rgb) > 0 ? 1 : 0;
+          } else {
+            const wave = Math.sin(t*1.3+p.index*.07);
+            opacity = m.type === "off" ? 0 : (m.brightness ?? 1)*(.88+.12*wave)*(st.brightness ?? 100)/100;
+            if (m.type === "rainbow") rgb = rainbowRgb((p.index*7+t*35)%360);
+            const overlay = S.overlay?.z === p.z?.id ? S.overlay : null;
+            if (overlay) {
+              color = overlay.color;
+              rgb = undefined;
+              const phase = (isReduced ? 0 : (now-overlay.from)/1100)*2*Math.PI;
+              opacity = overlay.type === "solid" || isReduced ? 1 : .49+.51*Math.cos(phase - (overlay.type === "wave" ? p.index*.12 : 0));
+            }
+          }
+        }
+        if (showLeds) paintDot(p,rgb ? "rgb("+rgb.join(",")+")" : color,opacity);
+        if (updateBias) {
+          const sample = bias[p.section];
+          const [r,g,b] = rgb || (opacity > 0 ? hexRgb(color) : [0,0,0]);
+          sample.r += r*opacity;
+          sample.g += g*opacity;
+          sample.b += b*opacity;
+          sample.count++;
         }
       }
-      return notes;
-    });
-    await saveGroups();
-    if (!isDirty()) { wizEnd(); toast("Centro gravado: desk-left, desk-center e desk-right já estão na fita."); }
-  }
-
-  // ---------------------------------------------------------------------------
-  // modes (scenes). Saved in the profile; the app applies a scene without restarting the capture.
-  const sceneIdOf = (v) => (v && typeof v === "object" ? v.id : v) || "";
-  const savedScenes = () => safe(() => JSON.parse(S.scenesSaved), []);
-  const scenesDirty = () => JSON.stringify(S.scenes) !== S.scenesSaved;
-  const activeSceneId = () => sceneIdOf(S.state && S.state.scene);
-  const trigOf = (sc) => {
-    const t = sc.triggers = sc.triggers || {};
-    t.allow = Array.isArray(t.allow) ? t.allow : [];
-    t.target_groups = Array.isArray(t.target_groups) ? t.target_groups : [];
-    t.min_priority = +t.min_priority || 0;
-    return t;
-  };
-  async function loadScenes({ preserve = true, retry = false } = {}) {
-    const revision = profileRevision;
-    const request = ++scenesRequest;
-    const current = () => revision === profileRevision && request === scenesRequest;
-    let r;
-    try {
-      r = await api("GET", "/scenes");
-    } catch (e) {
-      if (!current()) return;
-      if (e.status !== 404) {
-        if (retry) throw e;
-        if (e.status !== 401) toast(e.message, true);
-        return;
+      if (updateBias) {
+        paintBias("monitor",bias.monitor);
+        paintBias("desk",bias.desk);
       }
     }
-    if (!current()) return;
-    const scenes = Array.isArray(r) ? r : (r && r.scenes) || [];
-    scenes.forEach(trigOf);
-    const saved = JSON.stringify(scenes);
-    if (r && !Array.isArray(r) && r.active !== undefined) S.state.scene = r.active;
-    if (preserve && scenesDirty()) {
-      if (saved !== S.scenesSaved && !S.scenesConflict)
-        toast("Os modos remotos mudaram. Seu rascunho foi mantido.", true);
-      S.scenesConflict = saved !== S.scenesSaved;
-      renderModeBtns();
-      renderPolicy();
-      return;
+    if (animateRoom) {
+      lastAmbientFrame = ambientFrame;
+      ambient.fairy.style.opacity = (.84+.16*Math.sin(t*.9)).toFixed(3);
+      ambient.rain.setAttribute("transform","translate("+(-t*2%6).toFixed(2)+" "+(t*6%18).toFixed(2)+")");
+      ambient.steam.style.opacity=(.52+.29*Math.sin(t*1.7)).toFixed(3);
+      ambient.cat.setAttribute("transform","translate(0 "+(.68*Math.sin(t*1.43)).toFixed(2)+")");
+      if (room.dataset.loop === "stars") $("screen-stars").style.opacity=(.58+.42*Math.sin(t*.8)**2).toFixed(3);
+      else if (room.dataset.loop === "waves") $("screen-wave").setAttribute("transform","translate("+(-18*Math.sin(t*.61)).toFixed(2)+" 0)");
+      else $("screen-embers").setAttribute("transform","translate(0 "+(-6*Math.sin(t*.91)).toFixed(2)+")");
     }
-    S.scenes = scenes;
-    S.scenesSaved = saved;
-    S.scenesConflict = false;
-    if (!S.scenes.some((s) => s.id === S.scEdit)) S.scEdit = (S.scenes.find((s) => s.id === activeSceneId()) || S.scenes[0] || {}).id || null;
-    renderModeBtns();
-    renderScenes();
-    renderPolicy();
   }
-  function renderModeBtns() {
-    const box = $("modeBtns");
-    if (!box) return;
-    box.textContent = "";
-    const list = savedScenes();
-    const cur = activeSceneId();
-    if (!list.length) {
-      box.append(el("p", { class: "empty" }, "Os modos ainda não aparecem aqui (versão do Prismatik sem modos, ou nenhum criado)."));
-      $("modeInfo").textContent = "";
-      return;
+  function scheduleAnimation() {
+    clearInterval(animationTimer);
+    syncScreenMedia();
+    if (document.hidden) { cancelAnimationFrame(cameraAnimation); return; }
+    if (reducedMotion.matches) {
+      if (cameraAnimation) { cancelAnimationFrame(cameraAnimation); cameraAnimation=0; }
+      ambient.fairy.style.opacity = "";
+      ambient.rain.removeAttribute("transform");
+      ambient.steam.style.opacity = "";
+      ambient.cat.removeAttribute("transform");
+      $("screen-stars").style.opacity="";
+      $("screen-wave").removeAttribute("transform");
+      $("screen-embers").removeAttribute("transform");
     }
-    for (const sc of list) {
-      box.append(el("button", { type: "button", "aria-pressed": String(sc.id === cur), onclick: () => activateScene(sc.id) }, sc.name || sc.id));
-    }
-    const a = list.find((s) => s.id === cur);
-    $("modeInfo").textContent = a ? "Ligado agora: " + (a.name || a.id) + ". " + policyText(a) : "Nenhum modo ligado ainda. Escolha um acima.";
+    lastAmbientFrame = -1;
+    drawPreview(performance.now(),true);
+    animationTimer = setInterval(() => drawPreview(performance.now()),LED_STEP);
   }
-  function policyText(sc) {
-    const t = trigOf(JSON.parse(JSON.stringify(sc)));
-    const who = t.allow.length ? "Podem avisar: " + t.allow.join(", ") : "Nenhuma origem pode avisar";
-    const prio = t.min_priority > 0 ? "; só prioridade " + t.min_priority + " ou mais" : "";
-    const where = t.target_groups.length ? "; avisos sem alvo acendem em " + t.target_groups.join(", ") : "";
-    return who + prio + where + ".";
-  }
-  async function activateScene(id) {
-    if (id === activeSceneId() && !isDirty()) return;
-    if (isDirty() && !confirm("Há mudanças de zonas não aplicadas. Trocar de modo vai descartá-las. Continuar?")) return;
-    const sc = savedScenes().find((s) => s.id === id);
-    try {
-      await api("POST", "/scenes/" + encodeURIComponent(id) + "/activate");
-      applyState({ scene: id });
-      toast("Modo “" + ((sc && sc.name) || id) + "” ligado.");
-      renderScenes(); renderPolicy();
-      await loadGroups({ preserve: false });
-    } catch (e) { toast(e.message, true); }
-  }
-  const curScene = () => S.scenes.find((s) => s.id === S.scEdit) || null;
-  function scMutate(fn) { fn(); renderScenes(); }
-  function updateSceneBar() {
-    const dirty = scenesDirty();
-    $("scBar").hidden = !dirty;
-    $("scSave").disabled = !dirty;
-  }
-  function renderScenes() {
-    const tabs = $("scTabs"), ed = $("scEditor");
-    if (!tabs) return;
-    tabs.textContent = "";
-    ed.textContent = "";
-    const cur = activeSceneId();
-    for (const sc of S.scenes) tabs.append(el("button", { type: "button", "aria-pressed": String(sc.id === S.scEdit), onclick: () => { S.scEdit = sc.id; renderScenes(); } }, (sc.id === cur ? "● " : "") + (sc.name || sc.id)));
-    if (!S.scenes.length) tabs.append(el("p", { class: "empty" }, "Nenhum modo. Clique em “Novo modo” para criar um a partir das zonas atuais."));
-    $("scDup").disabled = $("scDel").disabled = !curScene();
-    updateSceneBar();
-    const sc = curScene();
-    if (!sc) return;
-    const t = trigOf(sc);
-    const nameInput = el("input", { type: "text", value: sc.name || "", maxlength: 40 });
-    nameInput.addEventListener("change", () => { const v = nameInput.value.trim(); if (!v) { nameInput.value = sc.name || ""; return; } sc.name = v; renderScenes(); });
-    ed.append(el("div", { class: "card" },
-      el("div", { class: "row" }, el("h2", {}, "Modo “" + (sc.name || sc.id) + "”"), el("span", { class: "spacer" }),
-        el("button", { type: "button", class: "primary", onclick: () => { if (scenesDirty()) toast("Salve as mudanças antes de ligar o modo.", true); else activateScene(sc.id); } }, sc.id === cur ? "Ligado ✓" : "Ligar este modo")),
-      el("label", { class: "field" }, el("span", {}, el("b", {}, "Nome")), nameInput, el("small", { class: "muted" }, "Código: ", el("code", {}, sc.id)))));
+  document.addEventListener("visibilitychange",scheduleAnimation);
+  reducedMotion.addEventListener("change",scheduleAnimation);
 
-    // what each group does in this mode
-    const gcard = el("div", { class: "card" }, el("h2", {}, "O que cada parte da fita faz neste modo"),
-      el("p", { class: "muted small" }, "Cada grupo pode seguir a tela, ficar numa cor, apagar… Os LEDs de cada grupo vêm das zonas (aba Zonas); aqui você escolhe só o jeito de acender."));
-    if (!sc.groups || !sc.groups.length) gcard.append(el("p", { class: "empty" }, "Este modo ainda não tem grupos. Use “Copiar as zonas atuais”."));
-    (sc.groups || []).forEach((g, gi) => {
-      const idx = groupIndices(g);
-      const key = sc.id + "/" + g.id;
-      const open = S.scOpen === key;
-      const head = el("header", { onclick: () => { S.scOpen = open ? null : key; renderScenes(); } },
-        el("span", { class: "chip", style: "background:" + groupColor(gi) }),
-        el("span", { class: "name" }, nameOf(g)),
-        el("span", { class: "meta" }, (idx.length ? rangesText(idx, 3) : "sem LEDs") + " · " + modeLabel((g.mode || {}).type)),
-        el("span", { class: "spacer" }),
-        el("span", { class: "muted small" }, open ? "▲ fechar" : "▼ editar"));
-      const card = el("div", { class: "group" }, head);
-      if (open) {
-        const modeSel = el("select", {});
-        for (const [v, label] of MODES) modeSel.append(el("option", { value: v }, label));
-        const ty = (g.mode || {}).type || "source";
-        modeSel.value = ty === "screen" ? "source" : ty;
-        modeSel.addEventListener("change", () => scMutate(() => { g.mode = defaultMode(modeSel.value, g.mode, gi); }));
-        card.append(el("div", { class: "body" },
-          el("div", { class: "grid" }, el("label", { class: "field" }, el("span", {}, el("b", {}, "Como acende")), modeSel,
-            el("small", { class: "muted" }, (MODES.find((x) => x[0] === modeSel.value) || [])[2] || ""))),
-          modeParams(g, gi, scMutate),
-          el("div", { class: "actions" }, el("span", { class: "spacer" }),
-            el("button", { type: "button", class: "danger", onclick: () => scMutate(() => { sc.groups.splice(gi, 1); t.target_groups = t.target_groups.filter((x) => x !== g.id); }) }, "Tirar do modo"))));
-      }
-      gcard.append(card);
+  let connectedOnce = false;
+  async function fixtureData() {
+    if (fixture) return fixture;
+    const res = await fetch(fixtureURL);
+    if (!res.ok) throw new Error("A prévia do quarto não foi encontrada.");
+    fixture = await res.json();
+    return fixture;
+  }
+  async function startOffline(problem = "") {
+    try {
+      const data = await fixtureData();
+      Object.assign(S,{ state:structuredClone(data.state),layout:data.layout,groups:structuredClone(data.groups),
+        scenes:structuredClone(data.scenes),profiles:[],live:false,wsUp:false,frame:null,geometryMock:false,groupsMock:false });
+      renderGeometry();
+      renderSettings();
+      updateConnection(problem);
+    } catch {
+      updateConnection("Prévia indisponível. Abra pelo Prismatik.");
+    }
+  }
+  async function refreshLive() {
+    const serial = ++snapshotSerial;
+    const st = await api("GET","/state");
+    if (!st?.profile || !Number.isInteger(st.led_count)) throw new ApiError(0,"O estado não chegou completo.");
+    const optional = (path) => api("GET",path).catch((e) => {
+      if (e.status === 401) throw e;
+      return null;
     });
-    gcard.append(el("div", { class: "actions row" },
-      el("button", { type: "button", title: "Troca os grupos deste modo pelos que estão no perfil agora (aba Zonas, já aplicados)",
-        onclick: () => { if (!confirm("Trocar os grupos deste modo pelas zonas atuais do perfil?")) return; scMutate(() => { sc.groups = JSON.parse(S.saved); t.target_groups = t.target_groups.filter((x) => sc.groups.some((g) => g.id === x)); }); } }, "Copiar as zonas atuais")));
-    ed.append(gcard);
-
-    // which sources may notify
-    const srcs = [...new Set([...KNOWN_SOURCES, ...t.allow])];
-    const allowBox = el("div", { class: "checks" });
-    for (const s of srcs) {
-      const cb = el("input", { type: "checkbox" });
-      cb.checked = t.allow.includes(s);
-      cb.addEventListener("change", () => { t.allow = cb.checked ? t.allow.concat([s]) : t.allow.filter((x) => x !== s); updateSceneBar(); });
-      allowBox.append(el("label", { class: "chk" }, cb, s));
+    const [layout,groups,scenes,profiles] = await Promise.all([
+      optional("/layout"), optional(groupRoute(st.profile)), optional("/scenes"), optional("/profiles")
+    ]);
+    if (serial !== snapshotSerial) return;
+    const missingLayout = !Array.isArray(layout?.leds);
+    let resolved = layout;
+    if (missingLayout) {
+      const data = await fixtureData();
+      if (st.led_count === data.state.led_count) resolved = data.layout;
+      else resolved = {screens:[],leds:[]};
     }
-    const addSrc = el("input", { type: "text", maxlength: 30, placeholder: "outra origem (ex.: meu-script)" });
-    const addIt = () => { const v = addSrc.value.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-"); if (!v) return; if (!t.allow.includes(v)) t.allow.push(v); renderScenes(); };
-    addSrc.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addIt(); } });
-    const tgBox = el("div", { class: "checks" });
-    for (const g of sc.groups || []) {
-      const cb = el("input", { type: "checkbox" });
-      cb.checked = t.target_groups.includes(g.id);
-      cb.addEventListener("change", () => { t.target_groups = cb.checked ? t.target_groups.concat([g.id]) : t.target_groups.filter((x) => x !== g.id); updateSceneBar(); });
-      tgBox.append(el("label", { class: "chk" }, cb, nameOf(g)));
+    const sameProfile = S.state?.profile === st.profile;
+    const resolvedGroups = Array.isArray(groups) ? groups : missingLayout && resolved.leds.length ? (await fixtureData()).groups : [];
+    if (serial !== snapshotSerial) return;
+    Object.assign(S,{state:st,layout:resolved,groups:resolvedGroups,scenes:Array.isArray(scenes) ? scenes : scenes?.scenes || [],
+      profiles:(profiles?.profiles || []).map((p)=>typeof p === "string" ? p : p.name).filter(Boolean),
+      live:true,geometryMock:missingLayout,groupsMock:groups === null});
+    if (!sameProfile) {
+      S.selected=null;
+      S.frame=pendingFrame=null;
+      S.overlay=null;
+      testTrigger=null;
+      $("undo").disabled=true;
+      $("target").dataset.pinned="false";
+      markOrderPath();
     }
-    ed.append(el("div", { class: "card" }, el("h2", {}, "Quais origens avisam neste modo"),
-      el("p", { class: "muted small" }, "Só as origens marcadas acendem a fita neste modo. As outras são silenciadas (o app que avisou não vê erro)."),
-      allowBox,
-      el("div", { class: "row" }, addSrc, el("button", { type: "button", onclick: addIt }, "Adicionar origem")),
-      slider("Prioridade mínima", t.min_priority, 0, 100, 1, (v) => String(v), (v) => { t.min_priority = v; updateSceneBar(); }, "Avisos com prioridade menor que isso são silenciados. 0 = todos passam; 90 = só os urgentes."),
-      el("div", { class: "field" }, el("span", {}, el("b", {}, "Onde os avisos acendem")), tgBox,
-        el("small", { class: "muted" }, "Vale para avisos que não dizem onde acender. Nenhum marcado = como o Prismatik decidir."))));
+    if (!S.state.scene && scenes?.active) S.state.scene=scenes.active;
+    renderGeometry();
+    renderSettings();
+    updateConnection();
   }
-  function newSceneId(name) {
-    const ids = new Set(S.scenes.map((s) => s.id));
-    const base = slug(name);
-    if (!ids.has(base)) return base;
-    for (let k = 2; ; k++) if (!ids.has(base + "-" + k)) return base + "-" + k;
-  }
-  function addScene(src, name) {
-    const sc = src ? JSON.parse(JSON.stringify(src)) : { groups: JSON.parse(S.saved), triggers: { allow: KNOWN_SOURCES.slice(), min_priority: 0, target_groups: [] } };
-    sc.name = name;
-    sc.id = newSceneId(name);
-    S.scenes.push(sc);
-    S.scEdit = sc.id;
-    renderScenes();
-  }
-  async function saveScenes() {
-    for (const sc of S.scenes) if (!(sc.name || "").trim()) { toast("Todo modo precisa de nome.", true); return; }
-    if (S.scenesConflict && !confirm("Os modos remotos mudaram. Substituir os modos remotos pelo rascunho?")) return;
-    const revision = profileRevision;
-    const submitted = JSON.stringify(S.scenes);
-    ++scenesRequest;
-    $("scSave").disabled = true;
-    try {
-      const r = await api("PUT", "/scenes", JSON.parse(submitted));
-      if (revision !== profileRevision) return;
-      ++scenesRequest;
-      const saved = Array.isArray(r) ? r : r && Array.isArray(r.scenes) ? r.scenes : JSON.parse(submitted);
-      saved.forEach(trigOf);
-      if (JSON.stringify(S.scenes) === submitted) S.scenes = saved;
-      S.scenesSaved = JSON.stringify(saved);
-      S.scenesConflict = false;
-      renderScenes(); renderModeBtns(); renderPolicy();
-      toast("Modos salvos no perfil.");
-    } catch (e) { toast(e.message, true); updateSceneBar(); }
-  }
-
-  // ---------------------------------------------------------------------------
-  // triggers
-  async function loadOverlays() {
-    try {
-      const o = await api("GET", "/overlays");
-      S.overlays = Array.isArray(o) ? o : [];
-    } catch (e) { S.overlays = []; }
-    renderPolicy();
-    renderOverlays();
-  }
-  const loadOverlaysSoon = debounce(loadOverlays, 250);
-  const EFFECT_PT = { pulse: "pulsar", flash: "piscar", wave: "onda", breathe: "respirar", rainbow: "arco-íris", solid: "cor fixa", gradient: "degradê" };
-  const srcKey = (o) => String(o.source || "");
-  function allowedSources() {
-    const sc = savedScenes().find((x) => x.id === activeSceneId());
-    return sc ? trigOf(JSON.parse(JSON.stringify(sc))).allow : null;
-  }
-  function renderPolicy() {
-    const info = $("policyInfo");
-    if (!info) return;
-    const sc = savedScenes().find((x) => x.id === activeSceneId());
-    info.textContent = sc ? "Modo “" + (sc.name || sc.id) + "”. " + policyText(sc) : "Nenhum modo ligado: todos os avisos acendem normalmente.";
-    const allow = allowedSources();
-    const seen = new Set([...KNOWN_SOURCES, ...(allow || []), ...S.overlays.map(srcKey).filter(Boolean)]);
-    const dl = $("srcList");
-    dl.textContent = "";
-    for (const s of seen) dl.append(el("option", { value: s }));
-    const box = $("srcFilter");
-    box.textContent = "";
-    const chip = (key, label, title) => box.append(el("button", { type: "button", title, "aria-pressed": String(S.srcFilter === key),
-      onclick: () => { S.srcFilter = key; renderPolicy(); renderOverlays(); } }, label));
-    chip("*", "Todas");
-    for (const s of seen) chip(s, s + (allow && !allow.includes(s) ? " (silenciada)" : ""), allow && !allow.includes(s) ? "Silenciada pelo modo atual" : "Pode avisar no modo atual");
-    chip("-", "sem origem");
-  }
-  function renderOverlays() {
-    const box = $("overlays");
-    box.textContent = "";
-    if (!S.overlays.length) { box.append(el("p", { class: "empty" }, "Nenhum efeito tocando agora.")); $("stopAll").disabled = true; return; }
-    $("stopAll").disabled = false;
-    const now = Date.now();
-    const shown = S.overlays.filter((o) => S.srcFilter === "*" || (S.srcFilter === "-" ? !srcKey(o) : srcKey(o) === S.srcFilter));
-    if (!shown.length) box.append(el("p", { class: "empty" }, "Nenhum efeito dessa origem tocando agora."));
-    for (const o of shown) {
-      let when = "até alguém parar";
-      if (o.removing) when = "terminando…";
-      else if (o.duration_ms > 0) when = "termina em " + Math.max(0, Math.ceil((o.started_at_ms + o.duration_ms - now) / 1000)) + " s";
-      box.append(el("div", { class: "ov" },
-        el("b", {}, o.id),
-        o.source ? el("span", { class: "chip-src muted small" }, "[" + o.source + "]") : null,
-        el("span", {}, EFFECT_PT[o.effect] || o.effect || ""),
-        el("span", { class: "muted small" }, "prioridade " + o.priority + " · " + when),
-        el("span", { class: "spacer" }),
-        el("button", { type: "button", onclick: () => stopOverlay(o.id) }, "Parar")));
-    }
-  }
-  function renderTargetOptions() {
-    const sel = $("tTarget");
-    const keep = sel.value;
-    while (sel.options.length > 3) sel.remove(3);
-    for (const g of JSON.parse(S.saved)) sel.append(el("option", { value: "g:" + g.id }, "Grupo: " + nameOf(g)));
-    if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
-  }
-  function buildTrigger() {
-    const type = $("tType").value;
-    const t = { id: $("tId").value.trim() || "teste-painel", effect: { type }, priority: +$("tPrio").value, blend: $("tBlend").value };
-    const target = $("tTarget").value;
-    const src = $("tSource").value.trim().toLowerCase();
-    if (src) t.source = src;
-    if (target === "all") t.target = { all: true };
-    else if (target === "scene") { /* no target: the active mode decides where it lights */ }
-    else if (target === "sel") t.target = { leds: { ranges: toRanges([...S.sel]) } };
-    else t.target = { groups: [target.slice(2)] };
-    if (type !== "rainbow") t.effect.color = $("tColor").value;
-    if (type !== "solid") t.effect.period_ms = +$("tPeriod").value;
-    if (type === "pulse" || type === "flash") t.effect.count = clamp(Math.round(+$("tCount").value || 0), 0, 100);
-    if (type === "wave") t.effect.width = 0.3;
-    const dur = Math.round(+$("tDur").value || 0);
-    if (dur > 0) t.duration_ms = dur * 1000;
-    return t;
-  }
-  function updateTriggerForm() {
-    const type = $("tType").value;
-    document.querySelector('[data-for="color"]').hidden = type === "rainbow";
-    document.querySelector('[data-for="count"]').hidden = !(type === "pulse" || type === "flash");
-    $("tPeriodOut").textContent = secs(+$("tPeriod").value);
-    $("tPrioOut").textContent = $("tPrio").value;
-    const json = JSON.stringify(buildTrigger());
-    const url = location.origin + "/api/v1/trigger";
-    $("tCmd").textContent =
-      "# PowerShell\n$t = 'SEU_TOKEN'\nInvoke-RestMethod -Method Post -Uri " + url +
-      " -Headers @{ Authorization = \"Bearer $t\" } -ContentType 'application/json' -Body '" + json.replace(/'/g, "''") + "'\n\n" +
-      "# curl\ncurl -X POST " + url + " -H \"Authorization: Bearer SEU_TOKEN\" -H \"Content-Type: application/json\" -d '" + json.replace(/'/g, "'\\''") + "'";
-  }
-
-  // ---------------------------------------------------------------------------
-  // WebSocket: live frames, stats and events
-  let ws = null, wsTimer = 0, wsBackoff = 1000, wsWasDown = false;
-  let wsAuthenticated = false, frameSubscribed = false;
-  const wantsFrames = () => !document.hidden && (S.tab === "inicio" || S.tab === "zonas");
-  function syncFrameSubscription() {
-    const on = wantsFrames();
-    if (!wsAuthenticated || !ws || ws.readyState !== WebSocket.OPEN || on === frameSubscribed) return;
-    ws.send(JSON.stringify({ type: on ? "subscribe" : "unsubscribe", channels: ["frame"] }));
-    frameSubscribed = on;
-    if (!on) S.frame = null;
+  function queueRecon() {
+    if (!TOKEN) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connectWs,reconnectMs);
+    reconnectMs = Math.min(reconnectMs*2,15000);
   }
   function connectWs() {
-    wsAuthenticated = false;
-    frameSubscribed = false;
-    clearTimeout(wsTimer);
-    if (!TOKEN) return;
-    try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"); }
-    catch (e) { scheduleWs(); return; }
-    ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: TOKEN }));
-    ws.onmessage = (ev) => {
-      let m;
-      try { m = JSON.parse(ev.data); } catch (e) { return; }
-      switch (m.type) {
-        case "auth_ok":
-          wsBackoff = 1000;
-          setConn(true);
-          ws.send(JSON.stringify({ type: "subscribe", channels: ["stats", "events"] }));
-          wsAuthenticated = true;
-          syncFrameSubscription();
-          if (m.state) applyState(m.state);
-          if (wsWasDown) {
-            wsWasDown = false;
-            refreshAfterReconnect(ws);
-          }
-          break;
-        case "frame": onFrame(m.rgb); break;
-        case "stats": {
-          const fps = Math.round(m.fps || 0), max = Math.round(m.serial_max_fps || 0);
-          $("fps").textContent = fps + (max ? " / " + max : "") + " quadros/s";
-          $("fps").title = "Quadros por segundo indo para a fita" + (max ? " (máximo do cabo: " + max + ")" : "");
-          break;
+    if (simulation || !TOKEN) return;
+    const socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://")+location.host+"/ws");
+    ws = socket;
+    socket.onopen = () => socket.send(JSON.stringify({type:"auth",token:TOKEN}));
+    socket.onmessage = (ev) => {
+      const msg = safe(() => JSON.parse(ev.data),null);
+      if (!msg) return;
+      if (msg.type === "auth_ok") {
+        reconnectMs = 950;
+        S.wsUp = true;
+        socket.send(JSON.stringify({type:"subscribe",channels:["frame","events"]}));
+        updateConnection();
+        if (connectedOnce || !S.live) refreshLive().catch(()=>{});
+        connectedOnce = true;
+      } else if (msg.type === "frame" && !document.hidden && !reducedMotion.matches) {
+        pendingFrame = msg.rgb;
+      } else if (msg.type === "event") {
+        const {event,data} = msg;
+        if (event === "status.changed" && S.state && typeof data?.on === "boolean") {
+          S.state.on = data.on;
+          renderSettings();
+          drawPreview(performance.now(),true);
+        } else if (event === "profile.changed" || event === "scene.changed" || event?.startsWith("led_order.")) {
+          if (!busy) refreshLive().catch(()=>{});
+        } else if (event === "overlay.ended" && testTrigger && (data?.id === testTrigger || data?.overlay_id === testTrigger)) {
+          testTrigger = null;
+          $("undo").disabled = true;
         }
-        case "event": onEvent(m.event, m.data || {}); break;
-        case "error": toast(ERR[m.code] || m.message || "Erro", true); break;
-        default: break;
       }
     };
-    ws.onclose = (ev) => {
-      setConn(false);
-      ws = null;
-      if (ev.code === 1008 && /unauthorized/.test(ev.reason || "")) {
-        showLogin("A senha deste painel não vale mais. Abra de novo pelo Prismatik.");
-        return;
-      }
-      wsWasDown = true;
-      scheduleWs();
+    socket.onclose = (ev) => {
+      S.wsUp = false;
+      S.frame = pendingFrame = null;
+      if (ev.code === 1008 && /unauthorized/i.test(ev.reason)) { showLogin(); return; }
+      if (S.live) updateConnection();
+      queueRecon();
     };
-  }
-  function scheduleWs() {
-    clearTimeout(wsTimer);
-    wsTimer = setTimeout(connectWs, wsBackoff);
-    wsBackoff = Math.min(wsBackoff * 2, 15000);
-  }
-  function onEvent(name, data) {
-    if (name === "overlay.started" || name === "overlay.ended") loadOverlaysSoon();
-    else if (name === "status.changed") applyState({ on: !!data.on });
-    else if (name === "scene.changed") {
-      const id = sceneIdOf(data.scene || data.id || data.active);
-      if (id) applyState({ scene: id });
-      if (!isDirty()) loadGroups();
-      if (!scenesDirty()) loadScenes(); else { renderModeBtns(); renderScenes(); renderPolicy(); }
-    }
-    else if (name === "profile.changed" && data.profile) applyState({ profile: data.profile });
   }
 
-  // ---------------------------------------------------------------------------
-  // start
-  async function refreshAll(reconnecting = false, current = () => true) {
-    const revision = profileRevision;
-    const [state, layout, profiles] = await Promise.all([api("GET", "/state"), api("GET", "/layout"), api("GET", "/profiles")]);
-    if (!current() || revision !== profileRevision) return;
-    S.profiles = (profiles && profiles.profiles) || [];
-    S.layout = layout;
-    applyState(state);
-    buildStages();
-    await Promise.all([loadGroups({ retry: reconnecting }), loadScenes({ retry: reconnecting }), loadOverlays()]);
-  }
-  async function refreshAfterReconnect(socket) {
-    const current = () => ws === socket;
-    try {
-      await refreshAll(true, current);
-    } catch (e) {
-      if (!current() || e.status === 401) return;
-      toast(e.message + " Tentando sincronizar de novo…", true);
-      setTimeout(() => { if (current()) refreshAfterReconnect(socket); }, 3000);
+  function installInventory(inventory) {
+    const buckets = { "Aparência":0,"Captura":1,"Dispositivo":2,"Integrações":3,"Avançado":4 };
+    const details = [...$("settings-groups").children];
+    const sections = details.map((d) => {
+      const group = mk("details",{class:"inventory"});
+      group.append(mk("summary",{},"Opções da janela clássica [mock]"));
+      d.append(group);
+      return group;
+    });
+    for (const [bucket,key,type,range,description] of inventory) {
+      const row = mk("div",{class:"inventory-row"});
+      row.append(mk("strong",{},description),mk("small",{},key+" · "+type+" · "+range));
+      sections[buckets[bucket] ?? 4].append(row);
     }
   }
-  let bootTimer = 0;
-  async function boot() {
-    clearTimeout(bootTimer);
+  async function init() {
+    applyStyle(local.get("style"));
+    applyScheme(local.get("scheme"));
+    const volume = local.get("volume");
+    music.volume = volume === null ? .64 : clamp(Number(volume)||0,0,1);
+    music.muted = local.get("mute") !== "false";
+    showMusic();
+    setScreenLoop(local.get("screen-loop"));
+    installInventory(inventory);
+    scheduleAnimation();
+    if (simulation) { await startOffline(); return; }
     readToken();
-    if (!TOKEN) { showLogin(""); return; }
-    showApp();
-    try {
-      await refreshAll();
-      connectWs();
-    } catch (e) {
-      if (e.status === 401) return;
-      setConn(false);
-      toast(e.message + " Tentando de novo…", true);
-      bootTimer = setTimeout(boot, 3000);
+    if (!TOKEN) { await startOffline(); return; }
+    try { await refreshLive(); }
+    catch (e) {
+      const offlineMessage = e.status === 401 ? "Acesso expirado. Reabra pelo Prismatik." : "Sem resposta do Prismatik.";
+      await startOffline(offlineMessage);
     }
+    if (TOKEN) connectWs();
   }
 
-  function wireUi() {
-    for (const b of document.querySelectorAll(".tabs button")) b.addEventListener("click", () => selectTab(b.dataset.tab));
-    $("theme").addEventListener("click", () => {
-      const dark = document.documentElement.dataset.theme
-        ? document.documentElement.dataset.theme === "dark"
-        : matchMedia("(prefers-color-scheme: dark)").matches;
-      const next = dark ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      local.set("prismatik.theme", next);
-      paintEditor();
-    });
-    $("on").addEventListener("change", async () => {
-      try { await api("PATCH", "/state", { on: $("on").checked }); }
-      catch (e) { toast(e.message, true); $("on").checked = !$("on").checked; }
-    });
-    $("brightness").addEventListener("input", () => {
-      brightnessDragging = true;
-      $("brightnessOut").textContent = $("brightness").value + "%";
-      sendBrightness(+$("brightness").value);
-    });
-    $("profile").addEventListener("change", async () => {
-      const p = $("profile").value;
-      try { await api("PATCH", "/state", { profile: p }); applyState({ profile: p }); }
-      catch (e) { toast(e.message, true); $("profile").value = S.state.profile; }
-    });
-    for (const b of document.querySelectorAll("[data-quick]")) {
-      b.addEventListener("click", () => {
-        if (b.dataset.quick === "stop") stopOverlay("*");
-        else trigger(QUICK[b.dataset.quick]);
+  const mobileQuery = matchMedia("(max-width:780px)");
+  const stage = document.querySelector(".stage");
+  let focusKind = "", leaveTimer = 0;
+  const mobileDots = new Map();
+  const zoneFor = (section) => {
+    const matches = [...zoneMap.values()].filter((z) => z.section === section);
+    return matches.find((z) => z.id === S.selected) || matches[0];
+  };
+  function renderMobileLeds() {
+    const preview = $("mobile-leds");
+    const type = focusKind || "monitor";
+    const box = type === "desk" ? [285,371,566,50] : type === "both" ? [285,197,566,218] : [440,199,320,190];
+    preview.setAttribute("viewBox",box.join(" "));
+    preview.replaceChildren();
+    mobileDots.clear();
+    if (!mobileQuery.matches) return;
+    const sections = type === "both" ? ["monitor","desk"] : [type];
+    for (const section of sections) {
+      const rect = section === "desk"
+        ? { x:290,y:386,width:549,height:23,rx:5 }
+        : { x:466,y:223,width:271,height:147,rx:9 };
+      preview.append(svg("rect",{ ...rect,fill:"#241d32",stroke:"#97748b","stroke-width":"2" }));
+    }
+    for (const p of pointMap.values()) {
+      if (!sections.includes(p.section)) continue;
+      const dot = svg("circle",{cx:p.x,cy:p.y,r:type === "both" ? 4.5 : 3,fill:p.dot.getAttribute("fill")||"#bc8b9c"});
+      preview.append(dot);
+      mobileDots.set(p.index,dot);
+    }
+  }
+  function placeControls() {
+    if (!focusKind || mobileQuery.matches) return;
+    const box = $("screen-anchor").getBoundingClientRect(), width = innerWidth, height = innerHeight;
+    const position = (x,y,w,h) => {
+      root.style.setProperty("--focus-left",x+"px");
+      root.style.setProperty("--focus-top",y+"px");
+      root.style.setProperty("--focus-width",w+"px");
+      root.style.setProperty("--focus-height",h+"px");
+    };
+    if (focusKind === "desk") {
+      const edge = new DOMPoint(289,392).matrixTransform(room.getScreenCTM());
+      const windowRight = room.querySelector('#section-hits [data-view="window"]').getBoundingClientRect().right;
+      const bottom = clamp(edge.y-22,Math.min(190,height-12),height-12);
+      const heightLimit = Math.min(420,bottom-12);
+      const left = Math.max(windowRight+16,width*.31);
+      position(left,bottom-heightLimit,Math.min(840,width-left-20),heightLimit);
+      return;
+    }
+    const left = clamp(box.left,4,width-210);
+    const top = clamp(box.top,4,height-169);
+    position(left,top,Math.min(width-left-4,Math.max(205,box.width)),Math.min(height-top-4,Math.max(165,box.height)));
+    if (focusKind === "both") {
+      const edge = new DOMPoint(310,391).matrixTransform(room.getScreenCTM());
+      const dockWidth = Math.min(480,width*.59);
+      root.style.setProperty("--dock-left",((width-dockWidth)/2)+"px");
+      root.style.setProperty("--dock-top",clamp(edge.y+22,88,height-82)+"px");
+      root.style.setProperty("--dock-width",dockWidth+"px");
+    }
+  }
+  function focusPose(type) {
+    const w = stage.clientWidth,h = stage.clientHeight;
+    const scale = Math.max(w/baseRect.w,h/baseRect.h);
+    if (type === "monitor") return fitView(601,300,clamp(Math.min(w*.82/270,h*.84/175)/scale,1,4));
+    if (type === "desk") return fitView(568,385,clamp(Math.min(w*.88/550,h*.95/245)/scale,1,4));
+    return fitView(567,294,clamp(Math.min(w*.9/575,h*.66/205)/scale,1,4));
+  }
+  function activateFocus(type, dialog) {
+    clearTimeout(leaveTimer);
+    const switched = focusKind !== type;
+    focusKind=type;
+    room.setAttribute("preserveAspectRatio","xMidYMid slice");
+    document.body.dataset.focusMode=type;
+    const pane = dialog.querySelector(".popup-inner");
+    if (switched) pane.scrollTop=0;
+    let nav = pane.querySelector(".focus-controls");
+    if (!nav) {
+      nav = $("focus-controls").content.firstElementChild.cloneNode(true);
+      pane.prepend(nav);
+      const back = nav.querySelector("[data-focus-back]");
+      back.addEventListener("click",() => dialog.close());
+      let touchY = null;
+      back.addEventListener("pointerdown",(ev) => {
+        if (ev.pointerType !== "touch") return;
+        touchY=ev.clientY;
+        back.setPointerCapture(ev.pointerId);
+      });
+      back.addEventListener("pointerup",(ev) => {
+        if (touchY !== null && ev.clientY-touchY > 48) dialog.close();
+        touchY=null;
+      });
+      back.addEventListener("pointercancel",() => { touchY=null; });
+      for (const b of nav.querySelectorAll("[data-focus-mode]")) b.addEventListener("click",() => {
+        const next=b.dataset.focusMode;
+        const z = zoneFor(next === "desk" ? "desk" : "monitor");
+        if (z) selectZone(z.id);
+        activateFocus(next,dialog);
       });
     }
-    $("selAll").addEventListener("click", () => { S.sel = new Set([...Array(ledCount()).keys()]); paintEditor(); });
-    $("selFree").addEventListener("click", () => { const own = owners(); S.sel = new Set(own.map((o, i) => (o < 0 ? i : -1)).filter((i) => i >= 0)); paintEditor(); });
-    $("selClear").addEventListener("click", () => { S.sel.clear(); paintEditor(); });
-    $("newGroup").addEventListener("click", createGroupFromSelection);
-    $("save").addEventListener("click", saveGroups);
-    $("undo").addEventListener("click", undo);
-    $("discard").addEventListener("click", () => {
-      if (!isDirty()) return;
-      S.undo.push(JSON.stringify(S.groups));
-      S.groups = JSON.parse(S.saved);
-      afterChange();
-      toast("Mudanças descartadas. Use Desfazer se foi sem querer.");
-    });
-    document.addEventListener("keydown", (ev) => {
-      const typing = /^(INPUT|SELECT|TEXTAREA)$/.test((ev.target && ev.target.tagName) || "");
-      if (S.tab !== "zonas" || typing) return;
-      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") { ev.preventDefault(); undo(); }
-      else if (ev.key === "Escape") { S.sel.clear(); paintEditor(); }
-    });
-    $("stopAll").addEventListener("click", () => stopOverlay("*"));
-    $("goModos").addEventListener("click", () => selectTab("modos"));
-    for (const b of document.querySelectorAll("[data-side]")) b.addEventListener("click", () => selectByPredicate((i) => (S.sides || [])[i] === b.dataset.side));
-    $("lcApply").addEventListener("click", applyLedColor);
-    $("lcClear").addEventListener("click", clearLedColor);
-    $("wizStart").addEventListener("click", wizStart);
-    $("scNew").addEventListener("click", () => {
-      const name = (prompt("Nome do novo modo:", "Novo modo") || "").trim();
-      if (name) addScene(null, name.slice(0, 40));
-    });
-    $("scDup").addEventListener("click", () => { const sc = curScene(); if (sc) addScene(sc, (sc.name + " (cópia)").slice(0, 40)); });
-    $("scDel").addEventListener("click", () => {
-      const sc = curScene();
-      if (!sc || !confirm("Apagar o modo “" + (sc.name || sc.id) + "”?")) return;
-      S.scenes = S.scenes.filter((x) => x !== sc);
-      S.scEdit = (S.scenes[0] || {}).id || null;
-      renderScenes();
-    });
-    $("scSave").addEventListener("click", saveScenes);
-    $("scDiscard").addEventListener("click", () => { S.scenes = JSON.parse(S.scenesSaved); if (!S.scenes.some((x) => x.id === S.scEdit)) S.scEdit = (S.scenes[0] || {}).id || null; renderScenes(); });
-    $("trigForm").addEventListener("submit", (ev) => {
-      ev.preventDefault();
-      if ($("tTarget").value === "sel" && !S.sel.size) { toast("Escolha LEDs na aba Zonas primeiro.", true); return; }
-      trigger(buildTrigger());
-      setTimeout(loadOverlays, 300);
-    });
-    $("trigForm").addEventListener("input", updateTriggerForm);
-    $("trigForm").addEventListener("change", updateTriggerForm);
-    window.addEventListener("beforeunload", (ev) => { if (isDirty() || scenesDirty() || [...profileDrafts.values()].some((draft) =>
-      JSON.stringify(draft.groups) !== draft.saved || JSON.stringify(draft.scenes) !== draft.scenesSaved)) { ev.preventDefault(); ev.returnValue = ""; } });
-    window.addEventListener("hashchange", () => { if (/(?:^#|&)t=/.test(location.hash)) boot(); });
-    document.addEventListener("visibilitychange", () => {
-      syncFrameSubscription();
-      if (!document.hidden && TOKEN && S.state) api("GET", "/state").then(applyState).catch(() => {});
-    });
-    setInterval(() => {
-      if (!document.hidden && TOKEN && S.state) api("GET", "/state").then(applyState).catch(() => {});
-    }, 15000);
-    setInterval(() => { if (S.tab === "gatilhos" && S.overlays.length) renderOverlays(); }, 1000);
+    for (const b of nav.querySelectorAll("[data-focus-mode]")) b.setAttribute("aria-pressed",String(b.dataset.focusMode === type));
+    goCamera(focusPose(type));
+    placeControls();
+    renderMobileLeds();
+    paintDock();
   }
-  function undo() {
-    if (!S.undo.length) return;
-    S.groups = JSON.parse(S.undo.pop());
-    afterChange();
+  function leaveFocus() {
+    if (!focusKind) return;
+    focusKind="";
+    room.setAttribute("preserveAspectRatio","xMidYMid slice");
+    markOrderPath();
+    goCamera(baseRect);
+    const release = () => { if (!focusKind) { delete document.body.dataset.focusMode; showCamera(baseRect); } };
+    if (reducedMotion.matches || document.hidden) release();
+    else leaveTimer=setTimeout(release,330);
   }
+  function openArea(type,from) {
+    const z = zoneFor(type);
+    if (z) selectZone(z.id);
+    openMenu(from);
+    if (focusKind !== type) activateFocus(type,popup);
+  }
+  function paintDock() {
+    const z=zoneFor("desk");
+    $("desk-dock").hidden=focusKind!=="both" || !z;
+    if (!z) return;
+    $("desk-dock-label").textContent=z.points.length+" LEDs";
+    $("dock-color").value=quietHex(z.mode?.color,z.color);
+    paintSwitch($("dock-power"),z.mode?.type !== "off");
+  }
+  $("dock-now").addEventListener("click",() => {
+    const z=zoneFor("desk");
+    if (!z) return;
+    selectZone(z.id);
+    selectTab("now");
+    activateFocus("desk",popup);
+    $("zone-picker").focus();
+  });
+  $("dock-color").addEventListener("change",() => {
+    changeColor($("dock-color").value,"Cor da mesa ajustada.",zoneFor("desk"));
+  });
+  $("dock-power").addEventListener("click",() => {
+    const z=zoneFor("desk");
+    if (!z) return;
+    const on = z.mode?.type !== "off";
+    changePower(z,on,on ? "Mesa desligada." : "Mesa ligada.");
+  });
+  $("screen-order").addEventListener("click",() => openOrder(modalOrigins.get(popup)||$("menu")));
+  $("screen-settings").addEventListener("click",showSettings);
+  mobileQuery.addEventListener("change",() => {
+    renderMobileLeds();
+    if (focusKind) goCamera(focusPose(focusKind));
+  });
 
-  const theme = local.get("prismatik.theme");
-  if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
-  wireUi();
-  updateTriggerForm();
-  const savedTab = local.get("prismatik.tab");
-  selectTab(TABS.includes(savedTab) ? savedTab : "inicio");
-  boot();
+  const screenImage=$("screen-image"),screenStill=$("screen-still");
+  let imageRead=0;
+  function setScreenLoop(value) {
+    const id = ["stars","waves","embers"].includes(value) ? value : "stars";
+    room.dataset.loop=id;
+    $("screen-loop").value=id;
+    local.set("screen-loop",id);
+  }
+  function clearScreenFile() {
+    imageRead++;
+    screenImage.removeAttribute("src");
+    $("custom-screen").setAttribute("hidden","");
+    $("custom-screen").style.display="none";
+    screenImage.hidden=screenStill.hidden=true;
+    $("screen-file").value="";
+    $("remove-screen-file").hidden=true;
+  }
+  function syncScreenMedia() {
+    if (!screenImage.getAttribute("src")) return;
+    const freeze = document.hidden || reducedMotion.matches;
+    screenImage.hidden=freeze;
+    screenStill.hidden=!freeze;
+    if (freeze && screenImage.complete && screenImage.naturalWidth) {
+      const ctx=screenStill.getContext("2d");
+      const w=screenImage.naturalWidth,h=screenImage.naturalHeight;
+      const scale=Math.max(screenStill.width/w,screenStill.height/h);
+      ctx.drawImage(screenImage,(screenStill.width-w*scale)/2,(screenStill.height-h*scale)/2,w*scale,h*scale);
+    }
+  }
+  $("screen-loop").addEventListener("change",() => { clearScreenFile(); setScreenLoop($("screen-loop").value); });
+  $("remove-screen-file").addEventListener("click",clearScreenFile);
+  $("screen-file-pick").addEventListener("click",() => $("screen-file").click());
+  $("screen-file").addEventListener("change",() => {
+    const image=$("screen-file").files[0];
+    if (!image) return;
+    clearScreenFile();
+    const generation=imageRead;
+    if (!["image/png","image/jpeg","image/webp","image/gif","image/avif"].includes(image.type)) {
+      $("settings-notice").textContent="Escolha uma imagem PNG, JPEG, WebP, GIF ou AVIF.";
+      return;
+    }
+    const reader=new FileReader();
+    reader.addEventListener("load",() => {
+      if (generation !== imageRead) return;
+      $("custom-screen").removeAttribute("hidden");
+      $("custom-screen").style.display="inline";
+      $("remove-screen-file").hidden=false;
+      screenImage.hidden=false;
+      screenImage.src=reader.result;
+      $("settings-notice").textContent="Fundo local selecionado para esta sessão.";
+      syncScreenMedia();
+    });
+    reader.addEventListener("error",() => { $("settings-notice").textContent="Não foi possível ler esta imagem."; });
+    reader.readAsDataURL(image);
+  });
+  screenImage.addEventListener("load",syncScreenMedia);
+  screenImage.addEventListener("error",() => {
+    if (screenImage.getAttribute("src")) $("settings-notice").textContent="Esta imagem não abriu no navegador.";
+  });
+
+  // Ranga, inventário 5.13: descrições de referência, sem leitura de valores privados.
+  const inventory = [
+    ["Avançado","MainConfigVersion","texto de versão","4.0 atual; migrações 1.0→2.0→3.0→4.0","Versão interna do esquema de armazenamento."],
+    ["Aparência","ProfileLast","nome de perfil","Nome de arquivo .ini; API só ativa perfil existente","Persiste o perfil selecionado; carrega modo, geometria e parâmetros do perfil."],
+    ["Avançado","Language","enum texto","<System>, English, Russian, Ukrainian, Portuguese (Brazil)","Idioma da janela Qt."],
+    ["Avançado","DebugLevel","inteiro","0–3 na UI (inicialização aceita int não negativo)","Verbosidade dos logs."],
+    ["Avançado","IsExpertMode","booleano","false / true","Modo Básico/Especialista da janela Qt."],
+    ["Dispositivo","IsKeepLightsOnAfterExit","booleano","false / true","Manter luz durante o evento de saída do programa."],
+    ["Dispositivo","IsKeepLightsOnAfterLock","booleano","false / true","Manter luz durante o evento de bloqueio da sessão."],
+    ["Dispositivo","IsKeepLightsOnAfterSuspend","booleano","false / true","Manter luz durante o evento de suspensão do sistema."],
+    ["Dispositivo","IsKeepLightsOnAfterScreenOff","booleano","false / true","Manter luz durante o evento de desligamento do monitor."],
+    ["Dispositivo","IsPingDeviceEverySecond","booleano","false / true","Consulta de presença do Lightpack enquanto luz está ligada."],
+    ["Avançado","IsUpdateFirmwareMessageShown","booleano","false / true","Marca interna de aviso de firmware exibido."],
+    ["Dispositivo","ConnectedDevice","enum texto","Lightpack, Adalight, Ardulight, Virtual, DRGB, DNRGB, WARLS; AlienFx se compilado","Seleciona o adaptador de saída. A troca direta do gerenciador não está ligada ao sinal do setter."],
+    ["Avançado","SupportedDevices","lista em texto CSV","Dispositivos compilados","Metadado derivado e regravado na inicialização; getter consulta a constante de compilação."],
+    ["Integrações","CheckForUpdates","booleano","false / true","Habilita a checagem automática executada na abertura da janela Qt."],
+    ["Integrações","InstallForUpdates","booleano","false / true","Preferência do instalador de atualizações; controle oculto em configurações de compilação."],
+    ["Avançado","AutoUpdatingVersion","texto","Versão de atualização ou vazio","Marcador mantido pelo atualizador."],
+    ["Avançado","HotKeys/{ação}","QKeySequence em texto","Sequência Qt; Undefined para limpar","Família de atalhos com getter/setter; conexão Qt comentada."],
+    ["Integrações","API/IsEnabled","booleano","false / true","Liga API TCP legada (padrão 3636). O botão de gerar chave grava API/AuthKey."],
+    ["Integrações","API/ListenOnlyOnLoInterface","booleano","false / true","Limita o bind da API TCP legada ao loopback."],
+    ["Integrações","API/Port","inteiro","Porta TCP 1–65535; handler Qt só verifica conversão para int","Porta da API TCP legada."],
+    ["Integrações","WebApi/IsEnabled","booleano","false / true","Liga servidor HTTP/WebSocket se compilado com WEBAPI_SUPPORT."],
+    ["Integrações","WebApi/Port","inteiro","1–65535; getter cai em 3637 para valor inválido","Porta HTTP/WebSocket; configura o listener."],
+    ["Integrações","WebApi/AllowedOrigins","lista em texto CSV","Origens separadas por vírgula; remove espaços externos e vazios","Origens web adicionais aceitas."],
+    ["Integrações","WebApi/AllowLan","booleano","false / true","Permite bind na rede; padrão loopback."],
+    ["Dispositivo","Adalight/NumberOfLeds","inteiro","1–511 no assistente; setter sem validação de faixa","Adalight: Quantidade de índices enviados; não define a ordem dos índices."],
+    ["Dispositivo","Adalight/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","Adalight: Estimativa de corrente por LED usada no limite de potência."],
+    ["Dispositivo","Adalight/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","Adalight: Limite de corrente total da fonte aplicado em software."],
+    ["Dispositivo","Adalight/SerialPort","texto","Nome/caminho de porta serial disponível","Adalight: Porta da controladora."],
+    ["Dispositivo","Adalight/BaudRate","inteiro em texto","9600, 57600, 115200, 128000, 153600, 230400, 256000, 460800, 500000, 921600, 1000000, 1500000, 2000000 na UI","Adalight: Velocidade serial; o compositor também recalcula o limite de quadros."],
+    ["Dispositivo","Adalight/ColorSequence","enum texto","RGB, RBG, GRB, GBR, BRG, BGR na UI","Adalight: Ordem dos canais de cada LED."],
+    ["Dispositivo","Ardulight/NumberOfLeds","inteiro","1–255 no assistente; setter sem validação de faixa","Ardulight: Quantidade de índices enviados; não define a ordem dos índices."],
+    ["Dispositivo","Ardulight/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","Ardulight: Estimativa de corrente por LED usada no limite de potência."],
+    ["Dispositivo","Ardulight/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","Ardulight: Limite de corrente total da fonte aplicado em software."],
+    ["Dispositivo","Ardulight/SerialPort","texto","Nome/caminho de porta serial disponível","Ardulight: Porta da controladora."],
+    ["Dispositivo","Ardulight/BaudRate","inteiro em texto","9600, 57600, 115200, 128000, 153600, 230400, 256000, 460800, 500000, 921600, 1000000, 1500000, 2000000 na UI","Ardulight: Velocidade serial; o compositor também recalcula o limite de quadros."],
+    ["Dispositivo","Ardulight/ColorSequence","enum texto","RGB, RBG, GRB, GBR, BRG, BGR na UI","Ardulight: Ordem dos canais de cada LED."],
+    ["Dispositivo","AlienFx/NumberOfLeds","inteiro","1–1 no assistente; setter sem validação de faixa","AlienFx: Quantidade de índices enviados; não define a ordem dos índices. Uso condicionado a ALIEN_FX_SUPPORTED."],
+    ["Dispositivo","AlienFx/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","AlienFx: Estimativa de corrente por LED usada no limite de potência. Uso condicionado a ALIEN_FX_SUPPORTED."],
+    ["Dispositivo","AlienFx/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","AlienFx: Limite de corrente total da fonte aplicado em software. Uso condicionado a ALIEN_FX_SUPPORTED."],
+    ["Dispositivo","Lightpack/NumberOfLeds","inteiro","1–10 no assistente; setter sem validação de faixa; Lightpack 4 suporta 8","Lightpack: Quantidade de índices enviados; não define a ordem dos índices."],
+    ["Dispositivo","Lightpack/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","Lightpack: Estimativa de corrente por LED usada no limite de potência."],
+    ["Dispositivo","Lightpack/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","Lightpack: Limite de corrente total da fonte aplicado em software."],
+    ["Dispositivo","Virtual/NumberOfLeds","inteiro","1–511 no assistente; setter sem validação de faixa","Virtual: Quantidade de índices enviados; não define a ordem dos índices."],
+    ["Dispositivo","Virtual/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","Virtual: Estimativa de corrente por LED usada no limite de potência."],
+    ["Dispositivo","Virtual/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","Virtual: Limite de corrente total da fonte aplicado em software."],
+    ["Dispositivo","Drgb/NumberOfLeds","inteiro","1–490 no assistente; setter sem validação de faixa","Drgb: Quantidade de índices enviados; não define a ordem dos índices."],
+    ["Dispositivo","Drgb/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","Drgb: Estimativa de corrente por LED usada no limite de potência."],
+    ["Dispositivo","Drgb/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","Drgb: Limite de corrente total da fonte aplicado em software."],
+    ["Dispositivo","Drgb/Address","texto","Endereço IP aceito por QHostAddress","Drgb: Destino UDP."],
+    ["Dispositivo","Drgb/Port","inteiro em texto","Porta UDP 1–65535; backend converte para ushort","Drgb: Porta do destino UDP."],
+    ["Dispositivo","Drgb/Timeout","inteiro","1–255 s na UI; 255 desativa expiração; backend usa uint8","Drgb: Prazo para apagar após faltar dados, se suportado pelo receptor."],
+    ["Dispositivo","Dnrgb/NumberOfLeds","inteiro","1–1500 no assistente; setter sem validação de faixa","Dnrgb: Quantidade de índices enviados; não define a ordem dos índices."],
+    ["Dispositivo","Dnrgb/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","Dnrgb: Estimativa de corrente por LED usada no limite de potência."],
+    ["Dispositivo","Dnrgb/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","Dnrgb: Limite de corrente total da fonte aplicado em software."],
+    ["Dispositivo","Dnrgb/Address","texto","Endereço IP aceito por QHostAddress","Dnrgb: Destino UDP."],
+    ["Dispositivo","Dnrgb/Port","inteiro em texto","Porta UDP 1–65535; backend converte para ushort","Dnrgb: Porta do destino UDP."],
+    ["Dispositivo","Dnrgb/Timeout","inteiro","1–255 s na UI; 255 desativa expiração; backend usa uint8","Dnrgb: Prazo para apagar após faltar dados, se suportado pelo receptor."],
+    ["Dispositivo","Warls/NumberOfLeds","inteiro","1–255 no assistente; setter sem validação de faixa","Warls: Quantidade de índices enviados; não define a ordem dos índices."],
+    ["Dispositivo","Warls/LedMilliAmps","inteiro","1–100 mA na UI; setter sem validação de faixa","Warls: Estimativa de corrente por LED usada no limite de potência."],
+    ["Dispositivo","Warls/PowerSupplyAmps","decimal","0–99,99 A na UI Qt, passo 0,1; setter sem validação de faixa","Warls: Limite de corrente total da fonte aplicado em software."],
+    ["Dispositivo","Warls/Address","texto","Endereço IP aceito por QHostAddress","Warls: Destino UDP."],
+    ["Dispositivo","Warls/Port","inteiro em texto","Porta UDP 1–65535; backend converte para ushort","Warls: Porta do destino UDP."],
+    ["Dispositivo","Warls/Timeout","inteiro","1–255 s na UI; 255 desativa expiração; backend usa uint8","Warls: Prazo para apagar após faltar dados, se suportado pelo receptor."],
+    ["Aparência","LightpackMode","enum texto","Ambilight, MoodLamp, SoundVisualizer (SOUNDVIZ_SUPPORT)","Escolhe captura da tela, lâmpada ou áudio; PATCH da 3637 não altera o modo."],
+    ["Aparência","IsBacklightEnabled","booleano","false / true","Liga/desliga a saída de luz."],
+    ["Captura","Grab/Grabber","enum texto","Qt, QtEachWidget (legado), WinAPI, WinAPIEachWidget (legado), X11, D3D9, MacCoreGraphics, MacAVFoundation, DDupl; depende da build","Backend de captura da tela."],
+    ["Captura","Grab/IsAvgColorsEnabled","booleano","false / true","Calcula uma média comum para LEDs capturados."],
+    ["Captura","Grab/IsSendDataOnlyIfColorsChanges","booleano","false / true","Suprime reenvio de cores iguais; afeta tela e modos geradores."],
+    ["Captura","Grab/Slowdown","inteiro","1–1000 ms, clamp no Settings","Intervalo nominal de captura; backend pode aplicar limite efetivo."],
+    ["Aparência","Grab/LuminosityThreshold","inteiro","0–100, clamp no Settings","Limiar de luminosidade baixa para piso/área morta."],
+    ["Captura","Grab/OverBrighten","inteiro","0–100, clamp no Settings","Realça cores da captura."],
+    ["Aparência","Grab/IsMinimumLuminosityEnabled","booleano","false / true","Usa piso de luminosidade; false seleciona área morta na UI."],
+    ["Captura","Grab/IsDX1011GrabberEnabled","booleano","false / true","Ativa captura via hook DX10/11, condicionada a D3D10_GRAB_SUPPORT."],
+    ["Captura","Grab/IsDX9GrabbingEnabled","booleano","false / true","Ativa captura via hook DX9, condicionada a D3D10_GRAB_SUPPORT."],
+    ["Captura","Grab/IsApplyGammaRampEnabled","booleano","false / true","Aplica compensação de redução de luz azul/rampa do sistema; UI desativa temperatura manual ao ligar."],
+    ["Captura","Grab/IsApplyColorTemperatureEnabled","booleano","false / true","Aplica temperatura manual; UI desativa compensação de luz azul ao ligar."],
+    ["Captura","Grab/ColorTemperature","inteiro","1000–10000 K na UI; setter grava int sem clamp","Temperatura da captura, se ativada."],
+    ["Captura","Grab/Gamma","decimal","0,05–10 na UI; setter grava decimal sem clamp","Gama da captura, antes da gama do dispositivo."],
+    ["Captura","Grab/DownscaleLevel","inteiro","0–4, clamp no Settings; escala 1 / 2^nível","Reduz resolução antes de amostrar as zonas."],
+    ["Captura","Grab/IsFullscreenWatchdogEnabled","booleano","false / true","Vigia de travamento em tela cheia no capturador DXGI."],
+    ["Captura","Grab/WatchdogStallMs","inteiro","500–10000 ms, clamp no Settings","Tempo sem quadros antes da ação do vigia."],
+    ["Aparência","Compositor/Groups","array JSON gravado em texto","ID único com 1–40 caracteres; seletores all/ranges/list; índices abaixo de led_count; API rejeita sobreposição entre grupos","Modos e ordem de efeito por grupo; não altera a correspondência física de índices."],
+    ["Aparência","Compositor/Scenes","array JSON gravado em texto","Máx. 16 via API; IDs de 1–40, nome até 60, groups, triggers.allow/target_groups/min_priority (0–100)","Cenas do perfil com grupos e regras para efeitos acionados por eventos."],
+    ["Aparência","Compositor/ActiveScene","ID em texto","ID de cena existente via API; vazio sem cena ativa","Guarda a cena ativa e, via ativação, substitui os grupos em uso."],
+    ["Aparência","MoodLamp/LiquidMode","booleano","false / true","Alterna transição de cores e cor constante."],
+    ["Aparência","MoodLamp/Color","cor RGB (#RRGGBB)","Hex RGB / QColor","Cor estática da lâmpada."],
+    ["Aparência","MoodLamp/Speed","inteiro","1–100, clamp no Settings","Velocidade da transição de cor."],
+    ["Aparência","MoodLamp/Lamp","enum inteiro","0 Static, 1 Fire, 2 RGB is Life","Variante de efeito da lâmpada."],
+    ["Aparência","SoundVisualizer/Device","inteiro","-1 (padrão) ou ID enumerado pelo backend","Dispositivo de áudio capturado. Requer SOUNDVIZ_SUPPORT."],
+    ["Aparência","SoundVisualizer/Visualizer","enum inteiro","IDs fornecidos pelo backend de visualização","Algoritmo de visualização. Requer SOUNDVIZ_SUPPORT."],
+    ["Aparência","SoundVisualizer/MinColor","cor RGB (#RRGGBB)","Hex RGB / QColor","Cor de mínimo do visualizador. Requer SOUNDVIZ_SUPPORT."],
+    ["Aparência","SoundVisualizer/MaxColor","cor RGB (#RRGGBB)","Hex RGB / QColor","Cor de máximo do visualizador. Requer SOUNDVIZ_SUPPORT."],
+    ["Aparência","SoundVisualizer/LiquidMode","booleano","false / true","Alterna cor variável e constante. Requer SOUNDVIZ_SUPPORT."],
+    ["Aparência","SoundVisualizer/LiquidSpeed","inteiro","1–100, clamp no Settings","Velocidade da cor variável. Requer SOUNDVIZ_SUPPORT."],
+    ["Dispositivo","Device/RefreshDelay","inteiro","64–1023 (timer), clamp no Settings","Ajusta a cadência do firmware Lightpack."],
+    ["Dispositivo","Device/IsUsbPowerLedDisabled","booleano","false / true","Desativa o indicador de energia USB nos dispositivos compatíveis."],
+    ["Aparência","Device/Smooth","inteiro","0–255, clamp no Settings","Suavização no compositor por software e comando no Lightpack, conforme caminho."],
+    ["Aparência","Device/Brightness","inteiro","0–100%, clamp no Settings","Brilho da saída."],
+    ["Aparência","Device/BrightnessCap","inteiro","1–100%, clamp no Settings","Teto do brilho da saída."],
+    ["Dispositivo","Device/ColorDepth","inteiro","32–255, clamp no Settings","Profundidade de cor enviada ao dispositivo compatível."],
+    ["Aparência","Device/Gamma","decimal","0,01–10 no Settings; 0,05–10 na UI","Correção de gama na saída."],
+    ["Aparência","Device/IsDitheringEnabled","booleano","false / true","Difusão do erro de quantização no processamento de saída compatível."],
+    ["Dispositivo","LED_{n}/IsEnabled","booleano","false / true","Habilita a amostragem/saída do índice."],
+    ["Dispositivo","LED_{n}/Size","QSize em px","Largura e altura da zona; setter sem clamp próprio","Área de amostragem associada ao índice."],
+    ["Dispositivo","LED_{n}/Position","QPoint em px","Coordenadas de tela, inclusive negativas em multimonitor","Posição de captura associada ao índice de saída físico."],
+    ["Dispositivo","LED_{n}/CoefRed","decimal","0,0–1,0; inválido retorna ao padrão","Ganho de branco do canal Red."],
+    ["Dispositivo","LED_{n}/CoefGreen","decimal","0,0–1,0; inválido retorna ao padrão","Ganho de branco do canal Green."],
+    ["Dispositivo","LED_{n}/CoefBlue","decimal","0,0–1,0; inválido retorna ao padrão","Ganho de branco do canal Blue."],
+    ["Integrações","{plugin}/Enable","booleano","false / true","Habilita a extensão; extensão ativa pode controlar a luz indiretamente."],
+    ["Integrações","{plugin}/Priority","inteiro","UI atribui 1–N conforme posição; setter sem faixa própria","Ordena prioridade na lista de extensões."],
+    ["Dispositivo","LED_{n} → layout.index","índice derivado","n = 1–1500 no INI; index = n−1, 0–led_count−1 na Web API","Identidade física usada pela aplicação: posição e tamanho por índice. Não há uma chave Index."],
+    ["Dispositivo","(assistente) Primeiro LED","inteiro","UI se apresenta em base 1; máximo definido como maxLedsCount−1","Numeração inicial por monitor; o código soma startId aos IDs calculados."],
+    ["Dispositivo","(assistente) Último LED","inteiro derivado","startId + quantidade de áreas − 1 na distribuição contínua","Extremo obtido pela contagem na distribuição; não há campo de fim independente no assistente legado."],
+    ["Dispositivo","(assistente) Inverter ordem","booleano","false / true","Inverte a numeração de toda a distribuição no monitor."],
+    ["Dispositivo","(assistente) Deslocamento","inteiro","−999 a +999 na UI; módulo da quantidade de zonas","Rotaciona a numeração na distribuição."],
+    ["Dispositivo","(assistente) Inverter fileira inferior","booleano","false / true","Reverte retângulos da metade inferior que não tocam as laterais, mantendo os IDs. Atalho geométrico para a mesa."],
+    ["Dispositivo","(assistente) Monitor","inteiro","Monitores ativos","Entrada de distribuição; o assistente grava a geometria resultante e a contagem do dispositivo."],
+    ["Dispositivo","(assistente) Quantidade de LEDs","inteiro","1–máximo do dispositivo (assistente)","Entrada de distribuição; o assistente grava a geometria resultante e a contagem do dispositivo."],
+    ["Dispositivo","(assistente) LEDs no topo/laterais/base","inteiro","0–999 por campo na UI","Entrada de distribuição; o assistente grava a geometria resultante e a contagem do dispositivo."],
+    ["Dispositivo","(assistente) Espessura","inteiro","1–50% na UI","Entrada de distribuição; o assistente grava a geometria resultante e a contagem do dispositivo."],
+    ["Dispositivo","(assistente) Largura do suporte","inteiro","0–99 na UI Qt","Entrada de distribuição; o assistente grava a geometria resultante e a contagem do dispositivo."],
+    ["Dispositivo","(assistente) Margens topo/laterais/base","decimal","0–40% na UI","Entrada de distribuição; o assistente grava a geometria resultante e a contagem do dispositivo."],
+    ["Dispositivo","(assistente) Pular cantos","booleano","false / true","Entrada de distribuição; o assistente grava a geometria resultante e a contagem do dispositivo."],
+    ["Captura","(Qt) Mostrar áreas de captura","enum","ocultar / numeradas brancas / coloridas","Sobreposição de diagnóstico da captura. A navegação por abas e os botões de abrir logs, perfil e painel são ações de sessão."],
+    ["Aparência","(Qt) Criar/renomear/excluir/restaurar perfil","ações","Nome de perfil conforme UI; restaurar usa padrões de initCurrentProfile","Administração dos arquivos de perfil. Restaurar usa initCurrentProfile; as três chaves Compositor/* não são inicializadas por ele."],
+    ["Avançado","(Qt) Tema da janela","derivado","Paleta do sistema Qt","Conforme paleta do sistema e troca de tema Qt."],
+    ["Integrações","(Qt) Metadados do plugin","manifesto INI","[Main] Name, Execute e variante por SO, Guid, Author, Description, Version, Icon","Configuração do manifesto externo; Qt exibe metadados e recarrega extensões."],
+    ["Avançado","API/IsAuthEnabled (legado)","booleano","false / true","Declaração setIsApiAuthEnabled sem definição nesta revisão. A chave ativa é API/AuthKey."],
+    ["Dispositivo","(V17) Ordem por segmento · início","inteiro","Índice válido; inclusivo","Primeiro LED do segmento."],
+    ["Dispositivo","(V17) Ordem por segmento · fim","inteiro","Índice válido; inclusivo","Último LED do segmento."],
+    ["Dispositivo","(V17) Ordem por segmento · sentido","enum","Normal / invertido","Define a orientação do segmento."],
+    ["Dispositivo","(V17) Ordem por segmento · deslocamento","inteiro","Inteiro normalizado pelo tamanho do segmento","Rotaciona o ponto de partida."],
+    ["Dispositivo","(V17) Ordem por segmento · espelhar","booleano","false / true","Espelhamento opcional; a composição com sentido fica para a especificação V17."],
+  ];
+  init();
 })();

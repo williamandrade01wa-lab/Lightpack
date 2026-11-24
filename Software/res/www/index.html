@@ -1,246 +1,327 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-style="lofi">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>Prismatik · Painel</title>
+<meta name="theme-color" content="#211923">
+<title>Quarto de luz · Prismatik</title>
 <link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="logo" aria-hidden="true"></span>Prismatik</div>
-  <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="inicio" aria-selected="true">Início</button>
-    <button role="tab" data-tab="zonas">Zonas</button>
-    <button role="tab" data-tab="modos">Modos</button>
-    <button role="tab" data-tab="gatilhos">Gatilhos</button>
-  </nav>
-  <div class="status">
-    <span id="conn" class="dot" title="Conexão"></span>
-    <span id="fps" class="muted"></span>
-    <button id="theme" class="icon" title="Trocar tema claro/escuro" aria-label="Trocar tema">◐</button>
+  <div class="brand"><span class="brand-mark" aria-hidden="true">◈</span><div><strong>PRISMATIK</strong><small>Sua luz, seu ritmo</small></div></div>
+  <div class="appearance">
+    <label class="sr" for="theme">Estilo do quarto</label>
+    <select id="theme"><option value="lofi">Lofi Noite</option><option value="retro">Retro CRT</option><option value="cozy">Aconchego Dia</option></select>
+    <button id="scheme" type="button" aria-label="Modo claro" aria-pressed="false" title="Alternar modo claro ou escuro">☀</button>
+    <button id="settings-open" type="button" aria-label="Configurações" title="Configurações">⚙</button>
+    <button id="menu" type="button" aria-haspopup="dialog" class="primary"><span aria-hidden="true">☰</span> Menu</button>
   </div>
 </header>
-
-<!-- sem token: explicação curta -->
-<section id="login" class="screen" hidden>
-  <div class="card narrow">
-    <h1>Abra o painel pelo Prismatik</h1>
-    <p>Por segurança, este painel só funciona quando é aberto pelo próprio Prismatik
-      (ele entrega uma senha escondida no endereço).</p>
-    <ol>
-      <li>Clique com o botão direito no ícone do Prismatik perto do relógio e escolha
-        <b>Abrir painel web</b>,</li>
-      <li>ou abra a janela do Prismatik, ative o <b>Modo Expert</b> e clique em
-        <b>Abrir painel web</b>.</li>
-    </ol>
-    <p class="muted" id="loginWhy"></p>
+<main>
+  <div class="heading"><div><h1>Quarto de luz</h1><p id="connection" role="status">Carregando prévia…</p></div></div>
+  <div class="stage-frame"><section class="stage" aria-label="Quarto interativo">
+    <svg id="room" viewBox="0 0 1100 510" preserveAspectRatio="xMidYMid slice" aria-label="Ilustração interativa do quarto; use os botões para navegar com teclado">
+    <defs>
+      <linearGradient id="wall" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop class="wall-top"/><stop offset="1" class="wall-bottom"/></linearGradient>
+      <linearGradient id="sky" x2="0" y2="1"><stop class="sky-top"/><stop offset="1" class="sky-bottom"/></linearGradient>
+      <linearGradient id="floor" x2="0" y2="1"><stop class="floor-top"/><stop offset="1" class="floor-bottom"/></linearGradient>
+      <linearGradient id="screen" x2="1" y2="1"><stop class="screen-top"/><stop offset="1" class="screen-bottom"/></linearGradient>
+      <radialGradient id="lamp"><stop stop-color="#ffbe75" stop-opacity=".64"/><stop offset="1" stop-color="#ffbe75" stop-opacity="0"/></radialGradient>
+      <radialGradient id="monitor-bias"><stop stop-color="currentColor"/><stop offset=".37" stop-color="currentColor" stop-opacity=".93"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></radialGradient>
+      <radialGradient id="desk-bias"><stop stop-color="currentColor"/><stop offset=".45" stop-color="currentColor" stop-opacity=".72"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></radialGradient>
+      <radialGradient id="neon-glow"><stop stop-color="#f58fbc" stop-opacity=".52"/><stop offset="1" stop-color="#f58fbc" stop-opacity="0"/></radialGradient>
+      <clipPath id="back-wall"><rect x="88" y="23" width="954" height="373"/></clipPath>
+      <clipPath id="rug-shape"><ellipse cx="584" cy="463" rx="286" ry="32"/></clipPath>
+      <linearGradient id="lamp-shade" x2="0" y2="1"><stop stop-color="#df805f"/><stop offset="1" stop-color="#ffc77e"/></linearGradient>
+      <pattern id="dither" width="7" height="7" patternUnits="userSpaceOnUse"><path d="M1 1h1v1H1zm4 4h1v1H5z" fill="#fff" opacity=".12"/></pattern>
+      <pattern id="windows" width="13" height="16" patternUnits="userSpaceOnUse"><path d="M3 4h3v5H3zm6 2h2v3H9z" fill="var(--lit)" opacity=".68"/></pattern>
+      <pattern id="weave" width="10" height="10" patternUnits="userSpaceOnUse"><path d="m0 5 5-5 5 5-5 5z" fill="none" stroke="#ffc892" opacity=".26"/></pattern>
+      <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse"><path d="M0 1h4" stroke="#060211" opacity=".25"/></pattern>
+      <clipPath id="glass"><rect x="171" y="108" width="227" height="160" rx="3"/></clipPath>
+      <clipPath id="screen-glass"><rect x="475" y="231" width="253" height="114" rx="5"/></clipPath>
+      <g id="plant"><path d="M0 48C3 29 2 15-4 2M1 39q10-18 22-22M0 32Q-11 16-22 16M1 24Q10 7 13 4" fill="none" stroke="var(--leaf)" stroke-width="3"/><path d="M-5 20Q-23 13-19 2Q-6 3-5 20M1 16Q1 0 13-5Q21 10 1 16M9 29Q14 15 29 17Q25 32 9 29M-8 32Q-27 30-28 15Q-12 13-8 32M0 35Q2 21 15 23Q11 36 0 35" fill="var(--leaf)"/><path d="M-16 43h32l-4 20h-24z" fill="var(--pot)"/><path d="M-17 43h34v5h-34z" fill="var(--pot-light)"/></g>
+      <g id="daisy"><path d="M0 0v13" stroke="var(--leaf)" stroke-width="2"/><path d="M0-6v12M-6 0H6m-10-4 8 8m0-8-8 8" stroke="#ffe5ab" stroke-width="3" stroke-linecap="round"/><circle r="2.5" fill="#d58256"/></g>
+    </defs>
+    <g id="room-art" aria-hidden="true">
+      <rect width="1100" height="510" fill="url(#wall)"/>
+      <path d="M0 0h88v405H0zM1042 0h58v408h-58z" class="side-wall"/>
+      <path d="M0 16h1100v7H0zm0 380h1100v12H0z" class="trim"/>
+      <path d="M0 407h1100v103H0z" fill="url(#floor)"/>
+      <path d="M0 428h1100M0 453h1100M0 486h1100" fill="none" class="floor-lines" stroke-width="2"/>
+      <path d="M0 0h1100v510H0z" fill="url(#dither)" opacity=".45"/>
+      <ellipse cx="594" cy="438" rx="327" ry="72" fill="var(--room-shadow)" opacity=".42"/>
+      <ellipse cx="584" cy="465" rx="300" ry="38" class="rug-edge"/>
+      <ellipse cx="584" cy="463" rx="286" ry="32" class="rug"/>
+      <ellipse cx="584" cy="463" rx="275" ry="26" fill="url(#weave)" stroke="var(--rug-edge)"/>
+      <g id="rug-light" clip-path="url(#rug-shape)" opacity="0">
+        <ellipse cx="582" cy="440" rx="308" ry="74" fill="url(#desk-bias)" opacity=".84"/>
+      </g>
+      <g clip-path="url(#back-wall)">
+        <ellipse id="monitor-wall-light" cx="601" cy="295" rx="299" ry="183" fill="url(#monitor-bias)" opacity="0"/>
+        <ellipse id="desk-wall-light" cx="568" cy="386" rx="344" ry="102" fill="url(#desk-bias)" opacity="0"/>
+      </g>
+      <path d="M150 97l261 8v177H154z" class="room-shadow" opacity=".52"/>
+      <rect x="159" y="97" width="251" height="182" rx="5" class="wood-dark"/>
+      <rect x="166" y="103" width="237" height="171" rx="3" class="wood"/>
+      <g clip-path="url(#glass)">
+        <rect x="171" y="108" width="227" height="160" fill="url(#sky)"/>
+        <g class="night"><circle cx="344" cy="145" r="35" fill="#ffe6b5" opacity=".15"/><circle cx="344" cy="145" r="21" fill="#ffe9ba"/><circle cx="352" cy="138" r="19" class="moon-cut"/><path d="M193 129h2m20 28h3m12-30h3m28 14h4m22-24h3m17 36h4m74 13h4m-104 0h3m109-35h3" stroke="#ffdfaf" stroke-width="2.6" stroke-linecap="round"/></g>
+        <g class="day"><circle cx="342" cy="142" r="37" fill="#fff1ac" opacity=".4"/><circle cx="342" cy="142" r="21" fill="#fff1b4"/><path d="M186 157q18-14 35 0h32q11-13 31 0M282 181q23-13 42 0h71" fill="none" stroke="#fff7e5" stroke-width="7" opacity=".64" stroke-linecap="round"/></g>
+        <path d="m170 213 38-24 32 17 28-31 48 28 29-21 54 29v57H170z" class="hills"/>
+        <path d="M170 224h19v-30h22v25h27v-21h34v22h19v-33h28v25h22v-11h20v22h13v-32h23v77H170z" class="city-back"/>
+        <path d="M171 234h20v-14h27v48h-47zm52 7h14v-26h22v-10h19v63h-55zm62-8h25v-20h27v29h18v26h-70zm76-11h38v46h-38z" class="city"/>
+        <path d="M171 234h20v-14h27v48h-47zm52 7h14v-26h22v-10h19v63h-55zm62-8h25v-20h27v29h18v26h-70zm76-11h38v46h-38z" fill="url(#windows)"/>
+        <path id="rain" d="m180 121-12 28m37-9-11 24m29 10-12 25m33-58-12 29m45-42-12 27m34 25-10 24m44-55-12 26m47-13-10 25m-11 18-9 22m-112-3-10 23m138-43-12 26m-73-82-10 23" stroke="#eaf2ff" stroke-width="1.4" opacity=".28" class="night"/>
+        <path d="m182 108-11 47v28l24-75m91 0-51 160h10l52-160m88 0-17 59 11-6 17-53" fill="#fff" opacity=".12"/>
+      </g>
+      <path d="M280 105h8v168h-8zm-114 91h237v6H166z" class="wood"/>
+      <path d="M155 274h260v9H155z" class="wood-light"/><path d="M161 282h246v5H161z" class="wood-dark"/>
+      <path d="M144 91h282" stroke="var(--trim)" stroke-width="5" stroke-linecap="round"/>
+      <path d="M153 93h17q-7 60 1 105l-9 46-19 3q13-66 10-154zm258 0h13q-7 81 11 152l-22-2-10-46q12-44 8-104z" class="curtain"/>
+      <path d="M145 196h27m230 0h25" stroke="var(--thread)" stroke-width="5"/>
+      <circle cx="486" cy="113" r="26" class="room-shadow" opacity=".5"/><circle cx="483" cy="109" r="24" class="wood-dark"/><circle cx="483" cy="109" r="19" fill="#eac4a2"/><path d="M483 96v3m0 20v3m-13-13h3m20 0h3m-13-11v12l8 4" stroke="#513342" stroke-width="1.8" stroke-linecap="round"/><circle cx="483" cy="109" r="2" fill="#513342"/>
+      <g transform="translate(538 96) rotate(-5)">
+        <rect x="3" y="5" width="88" height="112" rx="2" class="room-shadow" opacity=".5"/><rect width="88" height="112" class="wood-dark"/><rect x="4" y="4" width="80" height="104" class="art-paper"/>
+        <rect x="10" y="14" width="68" height="68" class="art-sky"/><circle cx="55" cy="37" r="15" fill="#ffcd87"/><path d="m10 69 20-27 13 17 9-9 26 29v3H10z" fill="var(--poster-hill)"/><path d="m10 77 28-16 11 8 10-4 19 12v5H10z" class="art-dark"/>
+        <path d="M15 90h58M23 97h42" stroke="var(--poster-ink)" opacity=".5"/><text x="44" y="12" text-anchor="middle" class="poster-text" font-size="5.8">FIM DE TARDE</text>
+      </g>
+      <g transform="translate(454 154) rotate(-3)">
+        <rect x="3" y="4" width="57" height="65" rx="2" class="room-shadow" opacity=".54"/>
+        <rect width="57" height="65" rx="2" class="wood-dark"/>
+        <rect x="4" y="4" width="49" height="57" class="art-paper"/>
+        <rect x="8" y="8" width="41" height="38" class="art-dark"/>
+        <circle cx="30" cy="24" r="10" fill="#e7a891"/>
+        <path d="M8 36q11-6 22 0t19 0m-41 5q11-6 22 0t19 0" fill="none" stroke="#e7a891" stroke-opacity=".75"/>
+        <path d="M15 52h27m-22 4h17" stroke="var(--poster-ink)" opacity=".62"/>
+      </g>
+      <g transform="translate(642 117) rotate(6)">
+        <rect x="3" y="4" width="55" height="74" class="room-shadow" opacity=".45"/><rect width="55" height="74" class="wood-dark"/><rect x="4" y="4" width="47" height="66" class="art-dark"/>
+        <circle cx="27.5" cy="31" r="15" fill="none" stroke="#edb0b4"/><path d="m12 39 15-21 16 21zm15-14v23m-11-3h23" fill="none" stroke="#edb0b4" stroke-width="1.3"/><path d="M11 57h32m-28 5h24" stroke="#edb0b4" opacity=".62"/>
+      </g>
+      <g>
+        <path d="M754 178h13v25h-7zm187 0h13v25h-7z" class="wood-dark"/>
+        <path d="M743 167h222v14H743z" class="room-shadow" opacity=".53"/><path d="M738 165h224v9H738z" class="wood-light"/><path d="M738 174h224v5H738z" class="wood-dark"/>
+        <path d="M754 125h12v40h-12z" fill="#c96f77"/><path d="M768 119h11v46h-11z" fill="#a577ac"/><path d="M781 130h14v35h-14z" fill="#d59673"/><path d="M797 113h12v52h-12z" fill="#7eae99"/><path d="m813 124 10-3 10 42-10 3z" fill="#e9b981"/><path d="M757 133h6m8-7h5m8 13h8m8-17h6m-46 31h4m7-2h5m8 5h8m8-7h6" stroke="#fff2cd" opacity=".65"/>
+        <rect x="844" y="112" width="55" height="53" rx="2" class="art-paper" transform="rotate(-6 870 165)"/><circle cx="874" cy="138" r="21" class="art-dark"/><circle cx="874" cy="138" r="16" fill="none" stroke="var(--lit)" opacity=".3"/><circle cx="874" cy="138" r="7" fill="#d48280"/><circle cx="874" cy="138" r="2" class="art-dark"/>
+        <use href="#plant" transform="translate(925 112) scale(.84)"/><path d="M922 147q31-8 24 25t12 29" fill="none" stroke="var(--leaf)" stroke-width="2"/><path d="M945 175q-8-8-15 0 8 9 15 0m4 13q12-10 15-1-9 7-15 1m5 7q-14-5-13 5 9 5 13-5" fill="var(--leaf)"/>
+      </g>
+      <path d="M95 30q145 100 278 9 122 66 250 0 152 85 340-5" fill="none" stroke="var(--wire)" stroke-width="2.8"/>
+      <g id="fairy" fill="#ffd29b" transform="translate(0 4)">
+        <path d="M119 43v9m42 8v9m43 3v9m43-2v9m42-17v9m45-25v9m81-14v9m48 6v9m49-7v9m50-16v9m47-24v9m45 0v9m49 6v9m47 1v9m49-9v9m51-19v9m52-26v9" stroke="var(--wire)" stroke-width="2.5"/>
+        <path d="M119 53h.1m42 17h.1m43 12h.1m43 7h.1m42-8h.1m45-16h.1m81-5h.1m48 15h.1m49 2h.1m50-7h.1m47-15h.1m45 9h.1m49 15h.1m47 10h.1m49 0h.1m51-10h.1m52-17h.1" stroke="#ffd29b" opacity=".22" stroke-width="14" stroke-linecap="round"/>
+        <path d="M119 53h.1m42 17h.1m43 12h.1m43 7h.1m42-8h.1m45-16h.1m81-5h.1m48 15h.1m49 2h.1m50-7h.1m47-15h.1m45 9h.1m49 15h.1m47 10h.1m49 0h.1m51-10h.1m52-17h.1" stroke="#ffe4ae" stroke-width="5" stroke-linecap="round"/>
+      </g>
+      <ellipse cx="354" cy="313" rx="58" ry="58" fill="url(#lamp)" opacity=".42"/>
+      <ellipse cx="805" cy="302" rx="125" ry="115" fill="url(#lamp)"/>
+      <use href="#plant" transform="translate(230 335) scale(1.24)"/>
+      <path d="M205 410h56v7h-56zm6 7h6v20h-6zm37 0h6v20h-6z" class="wood-dark"/>
+      <g>
+        <path d="M873 403q-30-18-27-41l20-62q9-21 30-22h53q28 0 35 22l22 61q8 29-20 49z" class="seat-dark"/>
+        <path d="M872 365l17-62q3-12 17-12h40q13 0 18 12l19 62z" class="seat"/>
+        <path d="M888 303q2-10 14-10h42q14 0 17 10l6 25q-35-9-84 5z" class="seat-shine"/>
+        <path d="M859 343q14 0 19 18l6 12h92l8-20q4-11 17-11 13 3 12 20l-9 44q-5 14-20 14H876q-18 0-22-18l-8-38q-3-17 13-21" class="seat"/>
+        <path d="M875 380q49-14 109 0l-2 13H877z" class="seat-shine"/>
+        <path d="M873 419h13l-5 22h-8zm107 0h13v22h-8z" class="wood-dark"/>
+        <path d="M964 369q-7 22-6 47l29 1q-6-26 5-53z" class="throw"/>
+        <path d="M964 369q-7 22-6 47l29 1q-6-26 5-53z" fill="url(#weave)"/>
+        <g id="cat">
+          <ellipse cx="927" cy="376" rx="37" ry="8" class="room-shadow" opacity=".4"/>
+          <path d="M896 373q-3-18 21-23 23-6 39 10 8 14-9 18h-47z" class="cat"/>
+          <path d="m894 365 1-13 9 7 10-1 6-7 3 14q2 12-15 12-16 0-14-12" class="cat-light"/>
+          <path d="M914 366q-2 3-5 0m-5 1q-2 3-5 0m-1 7 9-3m44-5q18 15-11 14h-17" fill="none" stroke="var(--cat-ink)" stroke-width="2" stroke-linecap="round"/>
+        </g>
+      </g>
+      <path d="M322 393h23v86h-23zm477 0h23v86h-23z" class="wood-dark"/>
+      <path d="M323 397h23v15h-23zm475 0h23v15h-23z" class="wood"/>
+      <path d="M341 430h468v8H341z" class="wood-dark" opacity=".65"/>
+      <g transform="translate(672 423)">
+        <ellipse cx="54" cy="44" rx="61" ry="8" class="room-shadow" opacity=".5"/>
+        <path d="M0 27h101v19H0zM74 2h29v19H74z" class="wood-dark"/>
+        <path d="M0 23h100l7 5H0zm74-25h29l5 4H74z" class="wood-light"/>
+        <path d="M5 32h88v10H5zm74-25h19v9H79z" class="wood"/>
+        <path d="M13 34h15v5H13zm69-25h10v4H82z" class="art-paper"/>
+        <g transform="translate(35 -29) rotate(-10)">
+          <rect width="47" height="52" rx="1.5" fill="#785c85"/>
+          <circle cx="23.5" cy="25" r="17" class="art-dark"/>
+          <circle cx="23.5" cy="25" r="12" fill="none" stroke="#c397b0" opacity=".56"/>
+          <circle cx="23.5" cy="25" r="5" fill="#d89575"/>
+          <circle cx="23.5" cy="25" r="1.5" class="art-dark"/>
+        </g>
+      </g>
+      <rect x="289" y="379" width="561" height="15" rx="4" class="wood-light"/>
+      <rect x="289" y="390" width="561" height="22" rx="3" class="wood"/><path d="M295 407h549v4H295z" class="wood-dark"/>
+      <path d="M305 401h135m21 0h149m22 0h201" stroke="var(--wood-light)" stroke-width="1" opacity=".55"/>
+      <g id="ring-light" transform="translate(350 307)">
+        <ellipse cy="74" rx="27" ry="4" class="room-shadow" opacity=".62"/>
+        <path d="M0 22v48m-19 0h38" fill="none" stroke="var(--wood-dark)" stroke-width="6" stroke-linecap="round"/>
+        <circle cx="1" cy="2" r="23" fill="none" stroke="var(--monitor)" stroke-width="8"/>
+        <circle r="23" fill="none" stroke="#ffc891" stroke-width="5"/>
+        <path d="M-21 5a22 22 0 0 1 32-25" fill="none" stroke="#fff1ce" stroke-width="2" stroke-linecap="round"/>
+      </g>
+      <path d="M588 356h26v23h-26z" class="monitor-frame"/><ellipse cx="601" cy="380" rx="41" ry="4" class="monitor-frame"/>
+      <g transform="translate(0 223) scale(1 1.155) translate(0 -223)"><rect x="466" y="221" width="270" height="134" rx="10" class="room-shadow"/>
+      <rect x="467" y="223" width="269" height="131" rx="10" class="monitor-frame"/>
+      <rect x="473" y="229" width="257" height="118" rx="6" class="monitor-bevel"/>
+      <g clip-path="url(#screen-glass)">
+        <rect x="475" y="231" width="253" height="114" fill="url(#screen)"/>
+        <circle cx="646" cy="273" r="25" fill="var(--screen-sun)" opacity=".86"/>
+        <path d="m473 322 51-49 27 28 35-43 58 60 29-26 57 38v16H473z" class="screen-hill"/>
+        <path d="m475 331 42-25 42 15 38-12 37 17 37-12 58 18v13H475z" class="screen-near"/>
+        <path d="M475 331h253m-253 7h253" stroke="var(--screen-sun)" opacity=".3"/>
+        <path d="m498 252 2 4 4 2-4 2-2 4-2-4-4-2 4-2zm22-8h2v2h-2zm172 20h3v3h-3zm-128-15h2v2h-2z" fill="var(--screen-sun)"/>
+        <g id="screen-stars" aria-hidden="true" fill="var(--screen-sun)"><circle cx="510" cy="256" r="2"/><circle cx="555" cy="280" r="1"/><circle cx="700" cy="239" r="1.5"/><circle cx="610" cy="242" r="1.6"/></g>
+        <g id="screen-wave" aria-hidden="true" stroke="var(--screen-sun)" fill="none" stroke-width="1.4" opacity=".54"><path d="M476 304q19-16 39 0t39 0 39 0 39 0 39 0 39 0 39 0"/><path d="M476 313q19-14 39 0t39 0 39 0 39 0 39 0 39 0 39 0"/></g>
+        <g id="screen-embers" aria-hidden="true" fill="var(--screen-sun)"><circle cx="513" cy="285" r="3"/><circle cx="557" cy="269" r="2"/><circle cx="589" cy="289" r="3"/><circle cx="679" cy="271" r="2"/><circle cx="699" cy="293" r="3"/></g>
+        <foreignObject x="475" y="231" width="253" height="114" id="custom-screen" hidden><div class="screen-media"><img id="screen-image" alt="" hidden><canvas id="screen-still" width="506" height="228" hidden></canvas></div></foreignObject>
+        <rect x="475" y="231" width="253" height="114" fill="url(#scan)" class="crt-only"/>
+        <g class="screen-invite" transform="translate(548 316)"><rect width="106" height="20" rx="4"/><text x="53" y="13.5" text-anchor="middle">ABRIR CONTROLES →</text></g>
+      </g>
+      <circle cx="601" cy="350" r="1.5" fill="#f5af89"/></g>
+      <path d="M544 379h94l11 9H534z" class="monitor-frame"/><path d="M548 382h85m-90 3h94" stroke="#a58294" stroke-width="1.2" stroke-dasharray="4 2"/>
+      <ellipse cx="667" cy="384" rx="10" ry="4.5" class="monitor-frame"/>
+      <path d="M389 380h31m-16-3v-37m0 2q-13-9-9-18" stroke="var(--monitor)" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <path d="M381 354v-11q0-18 15-18t15 18v11" fill="none" stroke="var(--headphones)" stroke-width="5"/><rect x="377" y="345" width="10" height="17" rx="4" class="headphones"/><rect x="405" y="345" width="10" height="17" rx="4" class="headphones"/>
+      <ellipse cx="432" cy="383" rx="17" ry="3.5" class="room-shadow"/><path d="M440 365q15-2 12 7-2 5-11 5" fill="none" stroke="var(--pot-light)" stroke-width="3"/><path d="M421 362h23l-3 18q-9 5-17 0z" class="mug"/><ellipse cx="432.5" cy="362" rx="11.5" ry="2.5" fill="#68423f"/>
+      <path id="steam" d="M429 357q-4-5 1-10t1-10m5 19q5-5 1-10t0-7" fill="none" stroke="var(--steam)" stroke-width="1.8" stroke-linecap="round"/>
+      <path d="M785 381h34m-17-3v-55" fill="none" stroke="var(--wood-dark)" stroke-width="5" stroke-linecap="round"/><path d="M784 292q17-9 35 0l15 39q-32 10-64 0z" fill="url(#lamp-shade)"/>
+      <path d="M770 332q32 9 64 0" fill="none" stroke="#ffe5a7" stroke-width="3"/><path d="m791 294-8 37m21-37 1 39m9-39 9 37" stroke="#ffeed1" opacity=".33" fill="none"/>
+      <path d="M753 379v-13m0 3 10-12m-12 12-9-10" stroke="var(--leaf)" fill="none" stroke-width="2"/><use href="#daisy" x="753" y="357"/><use href="#daisy" x="743" y="359"/><use href="#daisy" x="762" y="356"/><path d="M745 373h16l-3 10h-10z" class="mug"/>
+      <g class="neon" transform="translate(913 230) rotate(-7)">
+        <ellipse rx="66" ry="53" fill="url(#neon-glow)"/>
+        <rect x="-41" y="-26" width="82" height="52" rx="22" class="room-shadow" opacity=".27"/>
+        <path d="M-29 8C-40-9-25-21-11-11L10 5c14 11 27-2 18-14s-25 0-32 6l-15 13c-4 3-7 2-10-2Z" fill="none" stroke="#733965" stroke-width="7" opacity=".56"/>
+        <path d="M-29 8C-40-9-25-21-11-11L10 5c14 11 27-2 18-14s-25 0-32 6l-15 13c-4 3-7 2-10-2Z" fill="none" stroke="#ff97c4" stroke-width="3.8"/>
+        <path d="M-29 8C-40-9-25-21-11-11L10 5c14 11 27-2 18-14s-25 0-32 6l-15 13c-4 3-7 2-10-2Z" fill="none" stroke="#ffe4f1" stroke-width="1.4"/>
+      </g>
+      <path d="M79 401q-11-33 9-69 15 23-9 69m1-16q-41-5-37-44 28 3 37 44m1 14q12-42 36-40-2 37-36 40" fill="var(--leaf)"/>
+      <path d="M63 398h35l-5 33H68z" class="mug"/>
+    </g>
+    <g id="section-hits" aria-hidden="true">
+      <rect data-view="lights" x="95" y="28" width="870" height="61" rx="11"><title>Luzinhas</title></rect>
+      <rect data-view="window" x="144" y="91" width="284" height="203" rx="11"><title>Janela</title></rect>
+      <rect data-view="shelf" x="735" y="100" width="237" height="103" rx="11"><title>Estante</title></rect>
+      <rect data-view="chair" x="847" y="276" width="168" height="166" rx="11"><title>Poltrona</title></rect>
+      <rect data-view="monitor" x="451" y="208" width="302" height="168" rx="11"><title>Monitor</title></rect>
+      <path data-view="desk" d="M289 377h561v37H289z"><title>Mesa</title></path>
+    </g>
+    <rect id="screen-anchor" x="475" y="232" width="253" height="131" visibility="hidden" pointer-events="none"/>
+    <g id="zones-art"></g><g id="dots"></g><path id="order-arrow" visibility="hidden" pointer-events="none"/><g id="order-points" pointer-events="none"></g>
+    <rect id="band" visibility="hidden" pointer-events="none"/>
+    </svg>
+    <div class="stage-tools" role="group" aria-label="Ampliação">
+      <button id="out" type="button" aria-label="Diminuir zoom">−</button><button id="in" type="button" aria-label="Aumentar zoom">+</button><button id="home" type="button" title="Restaurar a vista do quarto">Quarto inteiro</button>
+    </div>
+    <div id="hint" role="status"></div>
+  </section></div>
+  <div class="below">
+    <section class="zone-panel" aria-label="Seções e zonas">
+      <div class="strip"><h2>Explorar</h2><div class="chips" id="views"></div></div>
+      <div class="strip"><h2>Zonas</h2><div class="chips" id="zone-list"></div><button type="button" id="edit" aria-pressed="false">Selecionar pontos</button></div>
+    </section>
+    <section class="player" aria-label="Música do quarto">
+      <div class="track"><span class="record" aria-hidden="true">◉</span><div><strong id="track-name"></strong><small id="track-state" aria-live="polite">Pausado</small></div></div>
+      <div class="transport">
+        <button id="prev-track" type="button" aria-label="Faixa anterior">«</button>
+        <button id="play" type="button" aria-label="Reproduzir">▶</button>
+        <button id="next-track" type="button" aria-label="Próxima faixa">»</button>
+        <button id="mute" type="button" aria-label="Silenciar música" aria-pressed="true" title="Ativar som">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M4 9h4l5-4v14l-5-4H4z"/>
+            <path class="sound-waves" d="M16 9a4 4 0 0 1 0 6m2.5-8.5a7.8 7.8 0 0 1 0 11"/>
+            <path class="sound-slash" d="m16 16 5-8"/>
+          </svg>
+        </button>
+        <input id="volume" type="range" min="0" max="100" value="64" aria-label="Volume">
+      </div>
+      <audio id="music" preload="none" loop></audio>
+    </section>
   </div>
-</section>
-
-<main id="app" hidden>
-  <!-- ============ INÍCIO (modo básico) ============ -->
-  <section id="tab-inicio" class="screen">
-    <div class="card">
-      <h2>Modo</h2>
-      <p class="muted small">Um modo muda de uma vez o que cada parte da fita faz e quais avisos podem acender. Escolha um:</p>
-      <div id="modeBtns" class="modebtns"></div>
-      <p class="muted small" id="modeInfo"></p>
-    </div>
-    <div class="grid2">
-      <div class="card">
-        <h2>Luzes</h2>
-        <label class="switch-row">
-          <span><b>Ligadas</b><br><small class="muted">Liga ou desliga a fita de LED.</small></span>
-          <input type="checkbox" id="on" class="switch">
-        </label>
-        <label class="field">
-          <span><b>Brilho</b> <output id="brightnessOut"></output></span>
-          <input type="range" id="brightness" min="0" max="100" step="1">
-          <small class="muted">Quanto a fita acende, de 0% (apagada) a 100%.</small>
-        </label>
-        <label class="field">
-          <span><b>Perfil</b></span>
-          <select id="profile"></select>
-          <small class="muted">Cada perfil guarda um jeito de usar as luzes (zonas, cores, velocidade).</small>
-        </label>
-        <p class="muted small" id="deviceInfo"></p>
-      </div>
-      <div class="card">
-        <h2>Efeitos rápidos</h2>
-        <p class="muted small">Toca um efeito por alguns segundos por cima do que está aceso. Bom para testar.</p>
-        <div class="fxbtns">
-          <button data-quick="whats"><i style="--c:#25d366"></i>Piscar verde</button>
-          <button data-quick="pulse"><i style="--c:#ff6a00"></i>Pulso laranja</button>
-          <button data-quick="wave"><i style="--c:#2a7bff"></i>Onda azul</button>
-          <button data-quick="rainbow"><i class="rb"></i>Arco-íris 5 s</button>
-          <button data-quick="stop" class="danger">Parar efeitos</button>
-        </div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Prévia ao vivo</h2>
-      <p class="muted small">Cada bolinha é um LED, no lugar onde ele fica. As cores são as que estão indo para a fita agora.</p>
-      <div class="stage" id="previewStage"></div>
-    </div>
-  </section>
-
-  <!-- ============ ZONAS (editor) ============ -->
-  <section id="tab-zonas" class="screen" hidden>
-    <div class="card">
-      <h2>Escolha os LEDs</h2>
-      <p class="muted small">
-        <b>Clique</b> em um LED para escolher. <b>Ctrl + clique</b> soma ou tira um LED.
-        <b>Shift + clique</b> pega todos entre o último e este. <b>Arraste</b> num espaço vazio para pegar uma área.
-        Duplo clique escolhe o grupo inteiro.
-      </p>
-      <div class="stage editor" id="editorStage"></div>
-      <div class="selbar">
-        <span id="selInfo" class="muted">Nenhum LED escolhido.</span>
-        <label class="chk"><input type="checkbox" id="addMode"> Somar à escolha (como Ctrl, útil no celular)</label>
-        <span class="spacer"></span>
-        <button id="selAll">Todos</button>
-        <button id="selFree">Sem grupo</button>
-        <button id="selClear">Limpar</button>
-        <button id="newGroup" class="primary">Criar grupo com os escolhidos</button>
-      </div>
-      <div class="selbar" id="quickSel">
-        <span class="muted small">Escolher um lado:</span>
-        <button data-side="l">Monitor: esquerda</button>
-        <button data-side="t">Monitor: topo</button>
-        <button data-side="r">Monitor: direita</button>
-        <button data-side="b">Mesa toda</button>
-        <span id="deskSides"></span>
-      </div>
-      <div class="selbar" id="ledColor">
-        <b>Cor só dos escolhidos:</b>
-        <input type="color" id="lcColor" value="#ff9f40" aria-label="Cor">
-        <button id="lcApply" class="primary">Aplicar cor</button>
-        <button id="lcClear" title="Os LEDs escolhidos voltam a seguir o grupo ou o modo de antes">Tirar cor individual</button>
-        <span class="muted small">Cria um grupo pequeno só com eles (vale na hora).</span>
-      </div>
-    </div>
-
-    <div class="card" id="wizCard">
-      <div class="row"><h2>Achar o centro da mesa</h2><span class="spacer"></span>
-        <button id="wizStart" class="primary">Começar</button></div>
-      <p class="muted small">Descobre quais LEDs da mesa ficam sob o monitor e separa a mesa em esquerda, centro e direita
-        (grupos <code>desk-left</code>, <code>desk-center</code>, <code>desk-right</code>). Os números mostrados são os mesmos da janela do Prismatik (começam em 1).</p>
-      <div id="wiz" hidden></div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <h2>Grupos do perfil <span id="groupsProfile"></span></h2>
-        <span class="spacer"></span>
-      </div>
-      <p class="muted small">Um grupo é um pedaço da fita com um jeito próprio de acender.
-        LEDs que não estão em nenhum grupo seguem o modo normal do perfil (normalmente, a tela).</p>
-      <div id="groups"></div>
-    </div>
-
-    <div class="savebar" id="savebar" hidden>
-      <span id="saveMsg">Há mudanças ainda não aplicadas.</span>
-      <span class="spacer"></span>
-      <button id="undo" title="Desfazer (Ctrl+Z)">Desfazer</button>
-      <button id="discard">Descartar</button>
-      <button id="save" class="primary">Aplicar na fita</button>
-    </div>
-  </section>
-
-  <!-- ============ MODOS (editor de cena) ============ -->
-  <section id="tab-modos" class="screen" hidden>
-    <div class="card">
-      <div class="row"><h2>Modos</h2><span class="spacer"></span>
-        <button id="scNew">Novo modo</button>
-        <button id="scDup">Duplicar</button>
-        <button id="scDel" class="danger">Apagar</button></div>
-      <p class="muted small">Escolha o modo que quer editar. O modo marcado com ● é o que está ligado agora.</p>
-      <div id="scTabs" class="modebtns small"></div>
-    </div>
-    <div id="scEditor"></div>
-    <div class="savebar" id="scBar" hidden>
-      <span id="scMsg">Há mudanças ainda não salvas.</span>
-      <span class="spacer"></span>
-      <button id="scDiscard">Descartar</button>
-      <button id="scSave" class="primary">Salvar modos</button>
-    </div>
-  </section>
-
-  <!-- ============ GATILHOS ============ -->
-  <section id="tab-gatilhos" class="screen" hidden>
-    <div class="card">
-      <h2>Quem pode avisar agora</h2>
-      <p class="muted small" id="policyInfo"></p>
-      <button id="goModos" type="button">Editar nos Modos</button>
-    </div>
-    <div class="card">
-      <h2>Efeitos tocando agora</h2>
-      <p class="muted small">Gatilhos são efeitos temporários por cima do que está aceso. Apps (WhatsApp, Claude, scripts) usam isso para chamar sua atenção.</p>
-      <div class="chips" id="srcFilter" role="group" aria-label="Filtrar por origem"></div>
-      <div id="overlays"></div>
-      <button id="stopAll" class="danger">Parar todos</button>
-    </div>
-    <div class="card">
-      <h2>Testar um efeito</h2>
-      <form id="trigForm" class="form">
-        <label class="field"><span><b>Onde</b></span>
-          <select id="tTarget">
-            <option value="all">Fita toda</option>
-            <option value="sel">LEDs escolhidos na aba Zonas</option>
-            <option value="scene">Onde o modo atual manda (sem alvo)</option>
-          </select>
-        </label>
-        <label class="field"><span><b>Origem</b></span>
-          <input type="text" id="tSource" list="srcList" maxlength="30" placeholder="(nenhuma)">
-          <datalist id="srcList"></datalist>
-          <small class="muted">Quem está avisando (ex.: claude). O modo atual pode silenciar origens que não estão na lista dele.</small></label>
-        <label class="field"><span><b>Efeito</b></span>
-          <select id="tType">
-            <option value="pulse">Pulsar (acende e apaga suave)</option>
-            <option value="flash">Piscar (liga/desliga seco)</option>
-            <option value="wave">Onda (luz correndo)</option>
-            <option value="breathe">Respirar (devagar)</option>
-            <option value="rainbow">Arco-íris</option>
-            <option value="solid">Cor fixa</option>
-          </select>
-        </label>
-        <label class="field" data-for="color"><span><b>Cor</b></span><input type="color" id="tColor" value="#25d366"></label>
-        <label class="field"><span><b>Velocidade</b> <output id="tPeriodOut"></output></span>
-          <input type="range" id="tPeriod" min="200" max="5000" step="100" value="700">
-          <small class="muted">Tempo de um ciclo. Menor = mais rápido.</small></label>
-        <label class="field" data-for="count"><span><b>Repetições</b></span>
-          <input type="number" id="tCount" min="0" max="100" value="3">
-          <small class="muted">0 = repete até você parar.</small></label>
-        <label class="field"><span><b>Duração máxima (segundos)</b></span>
-          <input type="number" id="tDur" min="0" max="3600" value="0">
-          <small class="muted">0 = até acabar as repetições ou você parar.</small></label>
-        <label class="field"><span><b>Prioridade</b> <output id="tPrioOut"></output></span>
-          <input type="range" id="tPrio" min="0" max="100" value="60">
-          <small class="muted">Se dois efeitos tocam juntos, o de número maior fica por cima.</small></label>
-        <label class="field"><span><b>Mistura</b></span>
-          <select id="tBlend">
-            <option value="alpha">Misturar com o que está aceso</option>
-            <option value="override">Substituir (cobre tudo)</option>
-            <option value="add">Somar luz (fica mais forte)</option>
-          </select>
-        </label>
-        <label class="field"><span><b>Nome</b></span>
-          <input type="text" id="tId" value="teste-painel" maxlength="40">
-          <small class="muted">Disparar de novo com o mesmo nome reinicia o efeito em vez de empilhar.</small></label>
-        <div class="row"><button type="submit" class="primary">Disparar</button></div>
-      </form>
-      <details>
-        <summary>Comando para usar em scripts</summary>
-        <p class="muted small">Troque <code>SEU_TOKEN</code> pelo valor de <code>Token</code> em <code>main.conf</code> (seção <code>[WebApi]</code>). Nunca compartilhe esse token.</p>
-        <pre id="tCmd"></pre>
-      </details>
-    </div>
-  </section>
 </main>
-
-<div id="toast" role="status" aria-live="polite"></div>
-<script src="app.js"></script>
+<dialog id="popup" aria-labelledby="popup-title">
+  <div class="popup-inner">
+    <div id="config-bar"></div>
+    <svg id="mobile-leds" aria-label="Prévia das LEDs selecionadas"></svg>
+    <div class="popup-head"><div><h2 id="popup-title">Menu de luz</h2><p id="popup-zone"></p></div><button id="close" type="button" autofocus aria-label="Fechar menu">×</button></div>
+    <div class="tabs" role="tablist" aria-label="Controles de luz">
+      <button type="button" role="tab" id="tab-now" aria-controls="now" aria-selected="true">Agora</button>
+      <button type="button" role="tab" id="tab-presets" aria-controls="presets" aria-selected="false" tabindex="-1">Presets</button>
+      <button type="button" role="tab" id="tab-triggers" aria-controls="triggers" aria-selected="false" tabindex="-1">Gatilhos</button>
+      <button type="button" role="tab" id="tab-scenes" aria-controls="scenes" aria-selected="false" tabindex="-1">Cenas</button>
+    </div>
+    <div class="screen-shortcuts"><button id="screen-order" type="button">Ordem</button><button id="screen-settings" type="button">⚙ Configurações</button></div>
+    <section id="now" role="tabpanel" aria-labelledby="tab-now" tabindex="0">
+      <div class="control"><label for="zone-picker">Zona</label><select id="zone-picker"></select></div>
+      <div class="control"><label for="color">Cor da luz</label><input id="color" type="color" value="#fbb883"></div>
+      <div class="control"><label for="brightness">Brilho</label><input id="brightness" type="range" min="0" max="100"><output id="brightness-value" for="brightness"></output></div>
+      <div class="control"><label for="power">Luz da zona</label><button id="power" type="button" role="switch" aria-checked="true">Ligada</button></div>
+      <button id="zone-order" type="button">Ordem das LEDs →</button>
+    </section>
+    <section id="presets" role="tabpanel" aria-labelledby="tab-presets" tabindex="0" hidden><p>Escolha o clima da zona selecionada.</p><div class="preset-grid" id="preset-list"></div></section>
+    <section id="triggers" role="tabpanel" aria-labelledby="tab-triggers" tabindex="0" hidden>
+      <form id="trigger-form">
+        <div class="phrase"><label>Quando <select id="event"><option value="">Teste manual</option><option value="openbot">Agente terminar</option><option value="sistema">Chegar notificação</option><option value="horario">Chegar no horário</option></select></label>
+        <span aria-hidden="true">→</span><label><span class="sr">Efeito</span><select id="effect"><option value="pulse">Pulsar</option><option value="wave">Fazer onda</option><option value="solid">Acender</option><option value="breathe">Respirar</option></select></label>
+        <label>em <select id="target" aria-label="Zona do gatilho"></select></label>
+        <label>por <select id="duration" aria-label="Duração"><option value="3">3 segundos</option><option value="5">5 segundos</option><option value="10">10 segundos</option><option value="20">20 segundos</option></select></label></div>
+        <p class="muted">O teste dispara o efeito agora. A execução automática de regras está indisponível nesta versão. O rascunho fica no navegador.</p>
+        <div class="actions"><button class="primary" type="submit">Testar</button><button id="undo" type="button" disabled>Desfazer</button></div>
+      </form>
+    </section>
+    <section id="scenes" role="tabpanel" aria-labelledby="tab-scenes" tabindex="0" hidden><p>Mude a iluminação do perfil inteiro.</p><div class="scene-list" id="scene-list"></div></section>
+    <div class="popup-status" id="notice" role="status"></div>
+  </div>
+  <aside id="desk-dock" hidden aria-label="Controles da mesa">
+    <div><strong>Mesa</strong><small id="desk-dock-label"></small></div>
+    <input id="dock-color" type="color" aria-label="Cor da mesa">
+    <button id="dock-power" type="button" role="switch" aria-checked="true">Ligada</button>
+    <button id="dock-now" type="button">Ajustar mesa</button>
+  </aside>
+</dialog>
+<dialog id="settings" aria-labelledby="settings-title">
+  <div class="popup-inner">
+    <div class="popup-head"><div><h2 id="settings-title">Configurações</h2><p>Preferências do quarto e do Prismatik</p></div><button id="settings-close" type="button" autofocus aria-label="Fechar configurações">×</button></div>
+    <label class="sr" for="settings-search">Buscar configurações</label><input id="settings-search" type="search" placeholder="Buscar configurações">
+    <p class="muted">Configuração completa do Prismatik indisponível nesta versão. Os ajustes de luz disponíveis aparecem abaixo.</p>
+    <div id="settings-groups">
+      <details open><summary>Aparência da luz</summary><div class="control"><label for="settings-theme">Estilo do quarto</label><select id="settings-theme"><option value="lofi">Lofi Noite</option><option value="retro">Retro CRT</option><option value="cozy">Aconchego Dia</option></select></div><div class="control"><label for="settings-mode">Modo claro ou escuro</label><select id="settings-mode"><option value="system">Do dispositivo</option><option value="dark">Escuro</option><option value="light">Claro</option></select></div><div class="control"><label for="screen-loop">Fundo do monitor</label><select id="screen-loop"><option value="stars">Céu de verão</option><option value="waves">Ondas lentas</option><option value="embers">Brasas</option></select></div><div class="control"><label id="screen-file-label" for="screen-file-pick">Meu arquivo</label><button id="screen-file-pick" type="button" aria-describedby="screen-file-label">Escolher imagem</button><input id="screen-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden></div><button id="remove-screen-file" type="button" hidden>Voltar aos fundos prontos</button><div class="control"><label for="global-bright">Brilho geral</label><input id="global-bright" type="range" min="0" max="100" value="100" aria-label="Brilho geral"><output id="global-value"></output></div><div class="control"><label for="global-power">Luz do quarto</label><button id="global-power" type="button" role="switch" aria-checked="true">Ligada</button></div></details>
+      <details><summary>Captura da tela</summary><div id="capture-info" class="setting-items"></div></details>
+      <details><summary>Dispositivo</summary><div class="control"><label for="profile">Perfil de luz</label><select id="profile"></select></div><div id="device-info" class="setting-items"></div><button id="settings-order" type="button">Ordem das LEDs →</button></details>
+      <details><summary>Integrações</summary><div id="integration-info" class="setting-items"></div></details>
+      <details><summary>Avançado</summary><div id="advanced-info" class="setting-items"></div></details>
+    </div>
+    <p id="settings-empty" hidden>Nenhuma configuração encontrada.</p>
+    <div class="actions"><button id="restore" type="button">Restaurar padrão</button><button id="restore-cancel" type="button" hidden>Cancelar</button></div>
+    <div class="popup-status" id="settings-notice" role="status"></div>
+  </div>
+</dialog>
+<dialog id="order-dialog" aria-labelledby="order-title">
+  <div class="popup-inner">
+    <div class="popup-head"><div><h2 id="order-title">Ordem das LEDs</h2><p id="order-subtitle">Escolha o caminho da luz</p></div><button id="order-close" type="button" autofocus aria-label="Fechar ordem das LEDs">×</button></div>
+    <p class="muted">Alterar a ordem na fita está indisponível nesta versão.</p>
+    <div class="control"><label for="order-segment">Segmento</label><select id="order-segment"></select></div>
+    <div class="order-fields">
+      <label>LED inicial <input id="order-start" type="number" min="1" value="1"></label>
+      <label>LED final <input id="order-end" type="number" min="1" value="1"></label>
+      <label>Sentido <select id="order-reverse"><option value="false">Normal →</option><option value="true">Invertido ←</option></select></label>
+      <label>Deslocamento <input id="order-offset" type="number" value="0"></label>
+    </div>
+    <label class="check"><input id="order-mirror" type="checkbox"> Espelhar</label>
+    <button id="order-pick" type="button">Marcar início e fim no quarto</button>
+    <div class="order-presets"><button id="order-desk" type="button">Mesa invertida</button><button id="order-cw" type="button">Contorno horário</button><button id="order-ccw" type="button">Contorno anti-horário</button></div>
+    <p id="order-preview"></p>
+    <div class="actions"><button id="order-test" type="button">Testar ordem</button><button id="order-save" type="button" class="primary">Experimentar por 15 s</button><button id="order-confirm" type="button" class="primary" hidden>Confirmar ordem</button><button id="order-undo" type="button">Desfazer</button></div>
+    <div class="popup-status" id="order-notice" role="status"></div>
+  </div>
+</dialog>
+<template id="focus-controls"><nav class="focus-controls" aria-label="Enquadramento da configuração">
+  <button type="button" data-focus-back>← Voltar ao quarto</button>
+  <div class="focus-modes" role="group" aria-label="Escolher área da luz">
+    <button type="button" data-focus-mode="monitor" aria-pressed="true">Tela</button>
+    <button type="button" data-focus-mode="desk" aria-pressed="false">Mesa</button>
+    <button type="button" data-focus-mode="both" aria-pressed="false">Tela + Mesa</button>
+  </div>
+</nav></template>
 </body>
 </html>
