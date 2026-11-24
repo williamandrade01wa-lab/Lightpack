@@ -157,6 +157,7 @@
   function selectTab(name) {
     if (S.wiz && name !== "zonas") wizEnd();
     S.tab = name;
+    syncFrameSubscription();
     local.set("prismatik.tab", name);
     for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === name));
     for (const s of TABS) $("tab-" + s).hidden = s !== name;
@@ -352,7 +353,7 @@
     const band = svgEl("rect", { class: "band", x: 0, y: 0, width: 0, height: 0, visibility: "hidden" });
     svg.append(band);
     container.append(svg);
-    const stage = { svg, els, pos, r, band };
+    const stage = { svg, els, pos, r, band, colors: [] };
     if (editable) wireEditor(stage);
     return stage;
   }
@@ -365,20 +366,23 @@
 
   let rafPending = false;
   function onFrame(b64) {
-    const bin = atob(b64);
-    const a = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
-    S.frame = a;
+    if (!wantsFrames() || typeof b64 !== "string") return;
+    S.frame = b64;
     if (!rafPending) { rafPending = true; requestAnimationFrame(() => { rafPending = false; drawFrame(); }); }
   }
   function drawFrame() {
     const stage = S.tab === "inicio" ? S.stages.preview : S.tab === "zonas" ? S.stages.editor : null;
     if (!stage || !S.frame || document.hidden) return;
-    const f = S.frame;
+    let frame;
+    try { frame = atob(S.frame); } catch (e) { return; }
     for (let i = 0; i < stage.els.length; i++) {
       const c = stage.els[i];
       if (!c) continue;
-      c.setAttribute("fill", i * 3 + 2 < f.length ? "rgb(" + f[i * 3] + "," + f[i * 3 + 1] + "," + f[i * 3 + 2] + ")" : "#000");
+      const offset = i * 3;
+      const color = offset + 2 < frame.length ? frame.slice(offset, offset + 3) : "";
+      if (stage.colors[i] === color) continue;
+      stage.colors[i] = color;
+      c.setAttribute("fill", color ? "rgb(" + color.charCodeAt(0) + "," + color.charCodeAt(1) + "," + color.charCodeAt(2) + ")" : "#000");
     }
   }
 
@@ -1269,7 +1273,18 @@
   // ---------------------------------------------------------------------------
   // WebSocket: live frames, stats and events
   let ws = null, wsTimer = 0, wsBackoff = 1000, wsWasDown = false;
+  let wsAuthenticated = false, frameSubscribed = false;
+  const wantsFrames = () => !document.hidden && (S.tab === "inicio" || S.tab === "zonas");
+  function syncFrameSubscription() {
+    const on = wantsFrames();
+    if (!wsAuthenticated || !ws || ws.readyState !== WebSocket.OPEN || on === frameSubscribed) return;
+    ws.send(JSON.stringify({ type: on ? "subscribe" : "unsubscribe", channels: ["frame"] }));
+    frameSubscribed = on;
+    if (!on) S.frame = null;
+  }
   function connectWs() {
+    wsAuthenticated = false;
+    frameSubscribed = false;
     clearTimeout(wsTimer);
     if (!TOKEN) return;
     try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"); }
@@ -1282,7 +1297,9 @@
         case "auth_ok":
           wsBackoff = 1000;
           setConn(true);
-          ws.send(JSON.stringify({ type: "subscribe", channels: ["frame", "stats", "events"] }));
+          ws.send(JSON.stringify({ type: "subscribe", channels: ["stats", "events"] }));
+          wsAuthenticated = true;
+          syncFrameSubscription();
           if (m.state) applyState(m.state);
           if (wsWasDown) {
             wsWasDown = false;
@@ -1450,6 +1467,7 @@
       JSON.stringify(draft.groups) !== draft.saved || JSON.stringify(draft.scenes) !== draft.scenesSaved)) { ev.preventDefault(); ev.returnValue = ""; } });
     window.addEventListener("hashchange", () => { if (/(?:^#|&)t=/.test(location.hash)) boot(); });
     document.addEventListener("visibilitychange", () => {
+      syncFrameSubscription();
       if (!document.hidden && TOKEN && S.state) api("GET", "/state").then(applyState).catch(() => {});
     });
     setInterval(() => {

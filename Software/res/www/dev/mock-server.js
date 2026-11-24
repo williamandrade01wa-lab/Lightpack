@@ -226,14 +226,22 @@ server.on("upgrade", (req, sock) => {
       if (m.type === "auth") {
         if (m.token === TOKEN) { sock.authed = true; wsSend(sock, { type: "auth_ok", state }); }
         else sock.end();
-      } else if (m.type === "subscribe") for (const c of m.channels || []) sock.subs.add(c);
+      } else if (sock.authed && (m.type === "subscribe" || m.type === "unsubscribe")) {
+        for (const channel of m.channels || []) {
+          if (m.type === "subscribe") sock.subs.add(channel);
+          else sock.subs.delete(channel);
+        }
+      }
     }
   });
   sock.on("close", () => sockets.delete(sock));
   sock.on("error", () => sockets.delete(sock));
 });
 
-setInterval(() => { if (sockets.size) broadcast({ type: "frame", rgb: frame().toString("base64") }, "frame"); }, 100);
+setInterval(() => {
+  if (![...sockets].some(sock => sock.authed && sock.subs.has("frame"))) return;
+  broadcast({ type: "frame", rgb: frame().toString("base64") }, "frame");
+}, 100);
 setInterval(() => broadcast({ type: "stats", fps: 10, serial_max_fps: 60 }, "stats"), 1000);
 
 server.listen(PORT, "127.0.0.1", () => console.log("mock em http://127.0.0.1:" + PORT + "/#t=" + TOKEN));

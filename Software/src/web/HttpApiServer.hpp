@@ -103,6 +103,7 @@ private:
 	struct WsClient {
 		bool authed{ false };
 		bool frame{ false };
+		QElapsedTimer lastFrame;
 		bool stats{ false };
 		bool events{ false };
 		QTimer *authTimer{ nullptr };
@@ -147,7 +148,7 @@ private:
 	// WebSocket
 	void onWsConnection();
 	void onWsMessage(QWebSocket *ws, const QString &text);
-	enum Channel { FrameChannel, StatsChannel, EventsChannel };
+	enum Channel { StatsChannel, EventsChannel };
 	void wsBroadcast(const QString &text, Channel channel);
 	bool wsHasSubscribers(Channel channel) const;
 	void sendStats();

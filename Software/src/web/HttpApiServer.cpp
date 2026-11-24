@@ -47,6 +47,7 @@ namespace
 	const int ConnectionTimeoutMs = 10000;
 	const int WsAuthTimeoutMs = 5000;
 	const int WsMaxMessageBytes = 64 * 1024;
+	const int PreviewFrameIntervalMs = 66; // approximately 15 fps
 	const qint64 WsBackpressureBytes = 1024 * 1024;
 	const int MaxScenes = 16;
 	const int MaxSourceLength = 40;
@@ -208,21 +209,32 @@ void HttpApiServer::stop()
 void HttpApiServer::onFrame(const QList<QRgb> &colors)
 {
 	++m_frameCount;
-	if (!wsHasSubscribers(FrameChannel))
-		return;
-	QByteArray rgb;
-	rgb.reserve(colors.size() * 3);
-	for (QRgb c : colors) {
-		rgb.append(char(qRed(c)));
-		rgb.append(char(qGreen(c)));
-		rgb.append(char(qBlue(c)));
+	QString text;
+	for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+		WsClient &client = it.value();
+		QWebSocket *socket = it.key();
+		if (!client.authed || !client.frame || socket->bytesToWrite() > WsBackpressureBytes)
+			continue;
+		if (client.lastFrame.isValid() && client.lastFrame.elapsed() < PreviewFrameIntervalMs)
+			continue;
+		if (text.isEmpty()) {
+			QByteArray rgb;
+			rgb.reserve(colors.size() * 3);
+			for (QRgb c : colors) {
+				rgb.append(char(qRed(c)));
+				rgb.append(char(qGreen(c)));
+				rgb.append(char(qBlue(c)));
+			}
+			QJsonObject msg;
+			msg.insert(QStringLiteral("type"), QStringLiteral("frame"));
+			msg.insert(QStringLiteral("t"), double(QDateTime::currentMSecsSinceEpoch()));
+			msg.insert(QStringLiteral("leds"), colors.size());
+			msg.insert(QStringLiteral("rgb"), QString::fromLatin1(rgb.toBase64()));
+			text = compactJson(msg);
+		}
+		if (socket->sendTextMessage(text) > 0)
+			client.lastFrame.start();
 	}
-	QJsonObject msg;
-	msg.insert(QStringLiteral("type"), QStringLiteral("frame"));
-	msg.insert(QStringLiteral("t"), double(QDateTime::currentMSecsSinceEpoch()));
-	msg.insert(QStringLiteral("leds"), colors.size());
-	msg.insert(QStringLiteral("rgb"), QString::fromLatin1(rgb.toBase64()));
-	wsBroadcast(compactJson(msg), FrameChannel);
 }
 
 void HttpApiServer::onOverlaysChanged(const QString &json)
@@ -1046,7 +1058,7 @@ bool HttpApiServer::wsHasSubscribers(Channel channel) const
 	for (const WsClient &c : m_clients) {
 		if (!c.authed)
 			continue;
-		if ((channel == FrameChannel && c.frame) || (channel == StatsChannel && c.stats) || (channel == EventsChannel && c.events))
+		if ((channel == StatsChannel && c.stats) || (channel == EventsChannel && c.events))
 			return true;
 	}
 	return false;
@@ -1058,13 +1070,9 @@ void HttpApiServer::wsBroadcast(const QString &text, Channel channel)
 		const WsClient &c = it.value();
 		if (!c.authed)
 			continue;
-		if (!((channel == FrameChannel && c.frame) || (channel == StatsChannel && c.stats) || (channel == EventsChannel && c.events)))
+		if (!((channel == StatsChannel && c.stats) || (channel == EventsChannel && c.events)))
 			continue;
-		QWebSocket *ws = it.key();
-		// slow client: drop frames instead of piling them up
-		if (channel == FrameChannel && ws->bytesToWrite() > WsBackpressureBytes)
-			continue;
-		ws->sendTextMessage(text);
+		it.key()->sendTextMessage(text);
 	}
 }
 
